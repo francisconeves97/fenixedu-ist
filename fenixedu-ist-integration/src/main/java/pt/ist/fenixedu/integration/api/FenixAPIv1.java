@@ -1510,6 +1510,8 @@ public class FenixAPIv1 {
 
         int numberOfStudents = executionCourse.getAttendsSet().size();
 
+        List<String> regents = new ArrayList<>();
+
         List<FenixTeacher> teachers = new ArrayList<>();
         for (Professorship professorship : executionCourse.getProfessorshipsSet()) {
 
@@ -1518,6 +1520,10 @@ public class FenixAPIv1 {
             List<String> mail = getTeacherPublicMail(professorship.getTeacher());
             List<String> url = getTeacherPublicWebAddress(professorship.getTeacher());
 
+            if (professorship.isResponsibleFor()) {
+                regents.add(tname);
+            }
+
             teachers.add(new FenixTeacher(tname, istid, mail, url));
         }
 
@@ -1525,7 +1531,7 @@ public class FenixAPIv1 {
         String announcementLink = courseUrl.concat("/rss/announcement");
 
         return new FenixCourseExtended(acronym, name, evaluationMethod, academicTerm, numberOfStudents, summaryLink,
-                announcementLink, courseUrl, moreInfo, teachers);
+                announcementLink, courseUrl, moreInfo, regents, teachers);
     }
 
     /**

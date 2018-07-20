@@ -188,11 +188,12 @@ public class FenixCourseExtended {
     String announcementLink;
     String url;
     List<FenixCompetence> competences;
+    List<String> regents;
     List<FenixTeacher> teachers;
 
     public FenixCourseExtended(String acronym, String name, String evaluationMethod, String academicTerm,
             Integer numberOfAttendingStudents, String summaryLink, String announcementLink, String url,
-            List<FenixCompetence> competences, List<FenixTeacher> teachers) {
+            List<FenixCompetence> competences, List<String> regents, List<FenixTeacher> teachers) {
         super();
         this.acronym = acronym;
         this.name = name;
@@ -201,6 +202,7 @@ public class FenixCourseExtended {
         this.numberOfAttendingStudents = numberOfAttendingStudents;
         this.summaryLink = summaryLink;
         this.competences = competences;
+        this.regents = regents;
         this.teachers = teachers;
         this.announcementLink = announcementLink;
         this.url = url;
@@ -268,6 +270,14 @@ public class FenixCourseExtended {
 
     public void setMoreInfo(List<FenixCompetence> competences) {
         this.competences = competences;
+    }
+
+    public List<String> getRegents() {
+        return regents;
+    }
+
+    public void setRegents(List<String> regents) {
+        this.regents = regents;
     }
 
     public List<FenixTeacher> getTeachers() {
