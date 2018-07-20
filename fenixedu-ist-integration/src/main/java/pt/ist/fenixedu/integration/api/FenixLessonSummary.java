@@ -11,6 +11,7 @@ import com.fasterxml.jackson.annotation.JsonInclude.Include;
 import com.fasterxml.jackson.annotation.JsonRawValue;
 import com.google.api.client.repackaged.com.google.common.base.Strings;
 
+import pt.ist.fenixedu.integration.api.beans.FenixPostAuthor;
 import pt.ist.fenixedu.integration.api.beans.publico.FenixSpace;
 
 public class FenixLessonSummary {
@@ -83,6 +84,7 @@ public class FenixLessonSummary {
 
     public static class FenixSummary {
         private String teacher;
+        private FenixPostAuthor author;
         private String title;
         private String content;
         private int attendanceCount;
@@ -93,6 +95,8 @@ public class FenixLessonSummary {
             this.teacher = !Strings.isNullOrEmpty(summary.getTeacherName()) ?
                     summary.getTeacherName() :
                     summary.getProfessorship().getPerson().getName();
+
+            this.author = new FenixPostAuthor(summary.getProfessorship().getPerson());
             this.title = summary.getTitle().json().toString();
             this.attendanceCount = summary.getStudentsNumber() != null ? summary.getStudentsNumber() : 0;
             this.taught = summary.getTaught();
@@ -109,6 +113,14 @@ public class FenixLessonSummary {
 
         public void setTeacher(String teacher) {
             this.teacher = teacher;
+        }
+
+        public FenixPostAuthor getAuthor() {
+            return author;
+        }
+
+        public void setAuthor(FenixPostAuthor author) {
+            this.author = author;
         }
 
         @JsonRawValue
