@@ -18,6 +18,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import io.jsonwebtoken.Jwts;
 import pt.ist.registration.process.domain.RegistrationDeclarationFile;
+import pt.ist.registration.process.domain.RegistrationDeclarationFileState;
 import pt.ist.registration.process.ui.exception.UnauthorizedException;
 import pt.ist.registration.process.ui.service.SignCertAndStoreService;
 
@@ -43,11 +44,26 @@ public class SignedDeclarationsController {
                 .parseClaimsJws(nounce).getBody().getSubject();
         Optional<RegistrationDeclarationFile> registrationDeclarationFile =
                 RegistrationDeclarationFile.getRegistrationDeclarationFile(registration, uniqueIdentifier);
+
         return registrationDeclarationFile.map(declarationFile -> {
             logger.debug("Registration Declaration {} of student {} was signed.",uniqueIdentifier, registration.getNumber());
             logger.debug("Registration Declaration {} of student {} sent to be certified", uniqueIdentifier, registration.getNumber());
-            signCertAndStoreService.sendDocumentToBeCertified(registration.getExternalId(), declarationFile.getFilename(), file,
-                    uniqueIdentifier, true);
+
+            RegistrationDeclarationFileState state = declarationFile.getState();
+
+            if (state == RegistrationDeclarationFileState.CERTIFIED || state == RegistrationDeclarationFileState.STORED) {
+                return "ok";
+            }
+
+            try {
+                byte[] fileBytes = file.getBytes();
+                declarationFile.updateState(RegistrationDeclarationFileState.SIGNED, fileBytes, file.getContentType());
+                signCertAndStoreService.sendDocumentToBeCertified(registration.getExternalId(), declarationFile.getFilename(),
+                        fileBytes, uniqueIdentifier, true);
+            } catch (IOException e) {
+                throw new Error(e);
+            }
+
             return "ok";
         }).orElseThrow(UnauthorizedException::new);
     }
@@ -64,7 +80,18 @@ public class SignedDeclarationsController {
             try {
                 logger.debug("Registration Declaration {} of student {} was certified.", uniqueIdentifier, registration.getNumber());
                 logger.debug("Registration Declaration {} of student {} sent out to be stored.", uniqueIdentifier, registration.getNumber());
-                signCertAndStoreService.sendDocumentToBeStored(registration.getPerson().getUsername(), registration.getPerson().getEmailForSendingEmails(), declarationFile, file);
+
+                RegistrationDeclarationFileState state = declarationFile.getState();
+
+                if (state == RegistrationDeclarationFileState.STORED) {
+                    return "ok";
+                }
+
+                byte[] fileBytes = file.getBytes();
+                String fileContentType = file.getContentType();
+                declarationFile.updateState(RegistrationDeclarationFileState.CERTIFIED, fileBytes, fileContentType);
+                signCertAndStoreService.sendDocumentToBeStored(registration.getPerson().getUsername(),
+                        registration.getPerson().getEmailForSendingEmails(), declarationFile, fileBytes, fileContentType);
                 return "ok";
             } catch (IOException e) {
                 throw new Error(e);

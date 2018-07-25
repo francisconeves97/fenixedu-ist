@@ -6,21 +6,29 @@ import java.util.Optional;
 import org.fenixedu.academic.domain.ExecutionYear;
 import org.fenixedu.academic.domain.student.Registration;
 import org.fenixedu.bennu.core.domain.User;
+import org.fenixedu.bennu.core.security.Authenticate;
+import org.joda.time.DateTime;
+
+import pt.ist.fenixframework.Atomic;
+import pt.ist.fenixframework.Atomic.TxMode;
 
 public class RegistrationDeclarationFile extends RegistrationDeclarationFile_Base {
 
     public RegistrationDeclarationFile(String filename, String displayName, byte[] content, Registration registration, ExecutionYear executionYear,  Locale locale, String uniqueIdentifier) {
         super();
-        getRegistrationDeclarationFile(registration, executionYear, filename, locale).ifPresent(RegistrationDeclarationFile::delete);
         init(displayName, filename, content);
         setUniqueIdentifier(uniqueIdentifier);
         setRegistration(registration);
         setExecutionYear(executionYear);
         setLocale(locale);
+        setCreator(Authenticate.getUser());
+        setLastUpdated(new DateTime());
+        setState(RegistrationDeclarationFileState.CREATED);
     }
 
     @Override
     public void delete() {
+        setCreator(null);
         setRegistration(null);
         setExecutionYear(null);
         super.delete();
@@ -29,6 +37,30 @@ public class RegistrationDeclarationFile extends RegistrationDeclarationFile_Bas
     @Override
     public boolean isAccessible(User user) {
         return false;
+    }
+
+    @Atomic(mode = TxMode.WRITE)
+    public void updateState(RegistrationDeclarationFileState state) {
+        setState(state);
+        setLastUpdated(new DateTime());
+    }
+
+    @Atomic(mode = TxMode.WRITE)
+    public void updateState(RegistrationDeclarationFileState state, byte[] fileBytes, String fileContentType) {
+        setState(state);
+        setLastFileReceived(fileBytes);
+        setLastFileReceivedType(fileContentType);
+        setLastUpdated(new DateTime());
+    }
+
+    @Atomic(mode = TxMode.WRITE)
+    public void updateState(RegistrationDeclarationFileState state, byte[] fileBytes, String fileContentType,
+            String downloadLink) {
+        setState(state);
+        setLastFileReceived(fileBytes);
+        setLastFileReceivedType(fileContentType);
+        setDownloadSignedFileLink(downloadLink);
+
     }
 
     public static Optional<RegistrationDeclarationFile> getRegistrationDeclarationFile(Registration registration, ExecutionYear

@@ -78,6 +78,11 @@
             <artifactId>papyrus-client</artifactId>
             <version>${version.papyrus.client}</version>
         </dependency>
+        <dependency>
+            <groupId>pt.ulisboa.tecnico.dsi</groupId>
+			<artifactId>employer</artifactId>
+			<version>0.8.0</version>
+        </dependency>
     </dependencies>
 
     <repositories>

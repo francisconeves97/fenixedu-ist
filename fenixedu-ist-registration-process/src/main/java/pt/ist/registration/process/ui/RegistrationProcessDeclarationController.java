@@ -1,0 +1,235 @@
+package pt.ist.registration.process.ui;
+
+import java.io.OutputStream;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import javax.servlet.http.HttpServletResponse;
+
+import org.fenixedu.academic.domain.ExecutionYear;
+import org.fenixedu.academic.domain.Person;
+import org.fenixedu.academic.domain.degree.DegreeType;
+import org.fenixedu.academic.domain.student.Registration;
+import org.fenixedu.bennu.spring.portal.SpringApplication;
+import org.fenixedu.bennu.spring.portal.SpringFunctionality;
+import org.joda.time.LocalDate;
+import org.joda.time.YearMonthDay;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.ui.Model;
+import org.springframework.web.bind.annotation.ModelAttribute;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
+
+import pt.ist.registration.process.domain.DeclarationTemplate;
+import pt.ist.registration.process.domain.RegistrationDeclarationFile;
+import pt.ist.registration.process.domain.RegistrationDeclarationFileState;
+import pt.ist.registration.process.domain.beans.DeclarationTemplateInputFormBean;
+import pt.ist.registration.process.ui.service.RegistrationDeclarationCreatorService;
+import pt.ist.registration.process.ui.service.RegistrationProcessDeclarationsService;
+import pt.ist.registration.process.ui.service.SignCertAndStoreService;
+
+@SpringApplication(group = "logged", path = "registration-process", title = "title.registration.process.signed.declaration")
+@SpringFunctionality(app = RegistrationProcessDeclarationController.class,
+        title = "title.registration.process.signed.declaration")
+@RequestMapping("/registration-process-signed-declaration")
+public class RegistrationProcessDeclarationController {
+
+    private static final Logger logger = LoggerFactory.getLogger(RegistrationProcessDeclarationController.class);
+
+    @Autowired
+    private RegistrationProcessDeclarationsService registrationProcessDeclarationsService;
+
+    @Autowired
+    private SignCertAndStoreService signCertAndStoreService;
+
+    @Autowired
+    private RegistrationDeclarationCreatorService documentService;
+
+    @RequestMapping(value = "/view-files/registration/{registration}", method = RequestMethod.GET)
+    public String list(@PathVariable Registration registration, Model model) {
+        return listFiles(model, registration);
+    }
+    
+    @RequestMapping(value = "/view-files/registration/{registration}/download/file/{declarationFile}", method = RequestMethod.GET)
+    public String downloadFile(@PathVariable Registration registration, 
+            @PathVariable RegistrationDeclarationFile declarationFile, Model model,
+            HttpServletResponse httpServletResponse) {
+
+        try {
+            final byte[] fileContent = declarationFile.getContent();
+            if (fileContent != null) {
+                httpServletResponse.setContentType(declarationFile.getContentType());
+                httpServletResponse.setHeader("Content-disposition", "attachment;filename=" + declarationFile.getFilename());
+                final OutputStream outputStream = httpServletResponse.getOutputStream();
+                outputStream.write(fileContent);
+                outputStream.close();
+            } else {
+                List<String> errors = new ArrayList<String>();
+                errors.add("label.declaration.generate.file.error.file.not.found");
+                return listFiles(model, registration, errors);
+            }
+        } catch (Exception e) {
+            List<String> errors = new ArrayList<String>();
+            errors.add("label.declaration.generate.file.error.ioexception");
+            return listFiles(model, registration, errors);
+        }
+        return null;
+    }
+    
+    @RequestMapping(value = "/generate-declaration/registration/{registration}", method = RequestMethod.POST)
+    public String generateRegistrationDeclaration(@PathVariable Registration registration,
+            @ModelAttribute DeclarationTemplateInputFormBean bean, Model model) {
+
+        List<String> errors = new ArrayList<String>();
+
+        final Person person = registration.getPerson();
+        final DegreeType degreeType = registration.getDegreeType();
+        
+        final ExecutionYear executionYear = bean.getExecutionYear();
+        final DeclarationTemplate template = bean.getDeclarationTemplate();
+        
+        final Set<ExecutionYear> registrationExecutionYears = registration.getRegistrationDataByExecutionYearSet().stream()
+                .map(p -> p.getExecutionYear()).collect(Collectors.toSet());
+
+        if (registrationProcessDeclarationsService.getSub23DeclarationTemplates().contains(template)) {
+            final YearMonthDay ymd = person.getDateOfBirthYearMonthDay();
+            final LocalDate today = new LocalDate();
+
+            if (ymd != null && ymd.plusYears(24).isBefore(today)) {
+                errors.add("label.declaration.generate.file.error.sub23.not.applicable");
+            }
+        }        
+
+        if (!registrationExecutionYears.contains(executionYear)) {
+            errors.add("label.declaration.generate.file.error.invalid.execution.year");
+        }
+
+        if (!degreeType.isBolonhaDegree() && !degreeType.isBolonhaMasterDegree() && !degreeType.isIntegratedMasterDegree()) {
+            errors.add("label.declaration.generate.file.error.wrong.degree.type");
+        }
+
+        if (person.getExpirationDateOfDocumentIdYearMonthDay() == null) {
+            errors.add("label.declaration.generate.file.error.missing.expiration.date.id.document");
+        }
+
+        if (person.getDateOfBirthYearMonthDay() == null) {
+            errors.add("label.declaration.generate.file.error.missing.birth.date");
+        }
+
+        if (person.getIdDocumentType() == null) {
+            errors.add("label.declaration.generate.file.error.missing.id.document.type");
+        }
+
+        if (person.getDocumentIdNumber() == null) {
+            errors.add("label.declaration.generate.file.error.missing.id.document.number");
+        }
+
+        if (!errors.isEmpty()) {
+            return listFiles(model, registration, errors);
+        }        
+
+        try {
+            RegistrationDeclarationFile registrationDeclarationFile =
+                    documentService.generateAndSaveFile(registration, executionYear, template);
+
+            String queue = registrationProcessDeclarationsService.getQueue(registration);
+
+            signCertAndStoreService.sendDocumentToBeSignedWithJob(registration, registrationDeclarationFile, queue);
+        } catch (Exception e) {
+            errors.add("label.declaration.generate.file.error.generating.file");
+            e.printStackTrace();
+            return listFiles(model, registration, errors);
+        }
+
+        return "redirect:" + "/registration-process-signed-declaration/view-files/registration/" + registration.getExternalId();
+    }
+
+    @RequestMapping(value = "/retry-declaration-workflow/registration/{registration}/file/{declarationFile}",
+            method = RequestMethod.GET)
+    public String retryWorkflow(@PathVariable Registration registration,
+            @PathVariable RegistrationDeclarationFile declarationFile, Model model) {
+
+        List<String> errors = new ArrayList<String>();
+
+        if (registration == null || declarationFile == null) {
+            errors.add("label.declaration.retry.workflow.error.missing.object.missing");
+        }
+
+        RegistrationDeclarationFileState state = declarationFile.getState();
+
+        if (state == null) {
+            errors.add("label.declaration.retry.workflow.error.file.state.null");
+        }
+
+        if (!errors.isEmpty()) {
+            return listFiles(model, registration, errors);
+        }
+
+        try {
+
+            switch (state) {
+
+            case CREATED:
+                String filename = declarationFile.getFilename();
+                String title = declarationFile.getDisplayName();
+                String queue = registrationProcessDeclarationsService.getQueue(registration);
+                String externalIdentifier = declarationFile.getUniqueIdentifier();
+
+                signCertAndStoreService.sendDocumentToBeSigned(registration.getExternalId(), queue, title, title, filename,
+                        declarationFile.getStream(), externalIdentifier);
+                declarationFile.updateState(RegistrationDeclarationFileState.PENDING);
+                break;
+
+            case PENDING:
+                logger.debug("Waiting for Registration Declaration {} of student {} to be signed",
+                        declarationFile.getUniqueIdentifier(), registration.getNumber());
+                break;
+
+            case SIGNED:
+                signCertAndStoreService.sendDocumentToBeCertified(registration.getExternalId(), declarationFile.getFilename(),
+                        declarationFile.getLastFileReceived(), declarationFile.getUniqueIdentifier(), true);
+                break;
+
+            case CERTIFIED:
+                signCertAndStoreService.sendDocumentToBeStored(registration.getPerson().getUsername(),
+                        registration.getPerson().getEmailForSendingEmails(), declarationFile, declarationFile.getLastFileReceived(),
+                        declarationFile.getLastFileReceivedType());
+                break;
+
+            case STORED:
+                logger.debug("Registration Declaration {} of student {} is already stored", declarationFile.getUniqueIdentifier(),
+                        registration.getNumber());
+                break;
+
+            default:
+                break;
+            }
+
+        } catch (Exception e) {
+            errors.add("label.declaration.retry.workflow.error.Exception");
+            return listFiles(model, registration, errors);
+        }
+
+        return "redirect:" + "/registration-process-signed-declaration/view-files/registration/" + registration.getExternalId();
+    }
+
+    public String listFiles(Model model, Registration registration) {
+        return listFiles(model, registration, new ArrayList<String>());
+    }
+
+    public String listFiles(Model model, Registration registration, List<String> errors) {
+        model.addAttribute("registration", registration);
+        model.addAttribute("declarationRegistrationFiles",
+                registrationProcessDeclarationsService.getRegistrationDeclarationFileOrderedByDate(registration));
+        model.addAttribute("declarationTemplateInputFormBean", new DeclarationTemplateInputFormBean());
+        model.addAttribute("declarationTemplates", registrationProcessDeclarationsService.getDeclarationTemplates());
+        model.addAttribute("errors", errors);
+
+        return "registration-process/list";
+    }
+}
