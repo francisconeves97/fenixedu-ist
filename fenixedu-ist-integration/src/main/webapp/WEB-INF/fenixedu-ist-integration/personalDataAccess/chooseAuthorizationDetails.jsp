@@ -36,7 +36,7 @@
     <h2>
         <spring:message code="authorize.personal.data.access.title" />
     </h2>
-    <a href="${baseUrl}">Consultar histórico de autorizações</a>
+    <a href="${baseUrl}"><spring:message code="authorize.personal.data.access.history" /></a>
 </div>
 
 <div>

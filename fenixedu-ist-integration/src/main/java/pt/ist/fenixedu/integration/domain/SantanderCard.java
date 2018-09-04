@@ -46,7 +46,7 @@ public class SantanderCard extends SantanderCard_Base {
                 santanderCard.setAllowSendCardDetails(allowCardAccess);
             }
 
-            new CardDataAuthorizationLog(title, body, BundleUtil.getString("resources/FenixEduIstIntegration", "label.take.consent"));
+            new CardDataAuthorizationLog(title, body, BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.take.consent"));
         }
     }
 

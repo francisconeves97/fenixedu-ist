@@ -87,7 +87,7 @@ public class CgdCard extends CgdCard_Base {
             final CgdCard card = findCardFor(user, year, allowCardAccess);
             if (card != null) {
                 card.setAllowSendCardDetails(allowCardAccess);
-                new CardDataAuthorizationLog(title, body, BundleUtil.getString("resources/FenixEduIstIntegration", "label.take.consent"));
+                new CardDataAuthorizationLog(title, body, BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.take.consent"));
                 if (allowCardAccess) {
                     return card;
                 }

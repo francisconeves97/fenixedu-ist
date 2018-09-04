@@ -38,11 +38,11 @@
     <h2>
         <spring:message code="authorize.personal.data.access.title" />
     </h2>
-    <a href="${historyUrl}">Consultar histórico de autorizações</a>
+    <a href="${historyUrl}"><spring:message code="authorize.personal.data.access.history" /></a>
 </div>
 <c:if test="${success}">
     <div class="success3" style="margin-top: 10px; margin-bottom: 10px;">
-        <span>Alterações efectuadas com sucesso</span>
+        <span><spring:message code="authorize.personal.data.access.saved" /></span>
     </div>
 </c:if>
 

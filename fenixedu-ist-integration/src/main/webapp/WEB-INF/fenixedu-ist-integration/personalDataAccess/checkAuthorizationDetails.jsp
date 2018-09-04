@@ -30,7 +30,7 @@
         <spring:message code="authorize.personal.data.access.title" />
     </h2>
     <spring:url value="/authorize-personal-data-access/history" var="baseUrl"/>
-    <a href="${baseUrl}">Consultar histórico de autorizações</a>
+    <a href="${baseUrl}"><spring:message code="authorize.personal.data.access.history" /></a>
 </div>
 
 <div>
@@ -48,7 +48,7 @@
                     ${csrf.field()}
                     <p>
                         <button class="btn btn-primary" type="submit">
-                            <spring:message code="authorize.personal.data.access.acknowledge" />
+                            <spring:message code="label.take.consent" />
                         </button>
                     </p>
                 </form>

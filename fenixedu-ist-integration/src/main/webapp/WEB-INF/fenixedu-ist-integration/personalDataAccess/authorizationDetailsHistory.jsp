@@ -1,6 +1,4 @@
 <%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core"%>
-<%@ taglib prefix="fr" uri="http://fenix-ashes.ist.utl.pt/fenix-renderers"%>
-<%@ taglib prefix="fmt" uri="http://java.sun.com/jsp/jstl/fmt"%>
 <%@ taglib prefix="spring" uri="http://www.springframework.org/tags"%>
 
 <div class="page-header">
@@ -13,10 +11,10 @@
 
 <table class="table results">
     <thead>
-        <th>Data</th>
-        <th>Título</th>
-        <th>Texto</th>
-        <th>Resposta</th>
+        <th><spring:message code="label.date" /></th>
+        <th><spring:message code="label.title" /></th>
+        <th><spring:message code="label.text" /></th>
+        <th><spring:message code="label.answer" /></th>
     </thead>
     <tbody>
     <c:if test="${not empty cardAuthorizationLogs}">
@@ -33,9 +31,8 @@
                     <c:out value="${log.description}" escapeXml="false" />
                 </td>
                 <td>
-                <c:out value="${log.answer}" />
+                    <c:out value="${log.answer}" />
                 </td>
-                
             </tr>
         </c:forEach>
     </c:if>

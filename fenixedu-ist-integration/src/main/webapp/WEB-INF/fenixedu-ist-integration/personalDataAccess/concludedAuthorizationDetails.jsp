@@ -8,7 +8,7 @@
 
 
 <div class="success3" style="margin-top: 10px; margin-bottom: 10px;">
-    <span>Alterações efectuadas com sucesso</span>
+    <span><spring:message code="authorize.personal.data.access.saved" /></span>
 </div>
 
 <spring:url value="/authorize-personal-data-access" var="baseUrl"/>
