@@ -24,6 +24,7 @@ import java.util.stream.Collectors;
 import javax.servlet.http.HttpServletRequest;
 
 import org.fenixedu.academic.domain.DomainOperationLog;
+import org.fenixedu.bennu.core.domain.User;
 import org.fenixedu.bennu.core.security.Authenticate;
 import org.fenixedu.bennu.spring.portal.SpringApplication;
 import org.fenixedu.bennu.spring.portal.SpringFunctionality;
@@ -71,6 +72,12 @@ public class AuthorizePersonalDataAccessController {
         this.messageSource = messageSource;
     }
 
+    private boolean checkCardDataAuthorizationWorkflowComplete() {
+        User user = Authenticate.getUser();
+
+        return SantanderCard.finishedCardDataAuthorization(user) && BpiCard.finishedCardDataAuthorization(user) && CgdCard.finishedCardDataAuthorization();
+    }
+
     private String getMessage(String key) {
         return messageSource.getMessage(key, new Object[0], I18N.getLocale());
     }
@@ -94,11 +101,60 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(method = RequestMethod.GET)
     public String intro(){
-        return "redirect://authorize-personal-data-access/santander-card";
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
+
+        return "redirect:/authorize-personal-data-access/santander-card";
+    }
+
+    @RequestMapping(value = "/review", method = RequestMethod.GET)
+    public String reviewCardDataAuthorization(Model model) {
+        User user = Authenticate.getUser();
+
+        model.addAttribute("santanderBankTitle", getMessage(santanderBankTitle));
+        model.addAttribute("santanderBankMessage", getMessage(santanderBankMessage));
+        model.addAttribute("cgdBankTitle", getMessage(cgdBankTitle));
+        model.addAttribute("cgdBankMessage", getMessage(cgdBankMessage));
+        model.addAttribute("bpiBankTitle", getMessage(bpiBankTitle));
+        model.addAttribute("bpiBankMessage", getMessage(bpiBankMessage));
+
+        model.addAttribute("allowSantanderBankAccess", SantanderCard.getAllowSendBankDetails(user));
+        model.addAttribute("allowCgdBankAccess", CgdCard.getAllowSendBank());
+        model.addAttribute("allowBpiBankAccess", BpiCard.getAllowSendBankDetails(user));
+
+        return "fenixedu-ist-integration/personalDataAccess/reviewAuthorizationDetails";
+    }
+
+    @RequestMapping(value = "/review/santander-bank", method = RequestMethod.POST)
+    public String reviewSantanderCardDataAuthorizationSubmit(RedirectAttributes redirAttrs, @RequestParam boolean allowSantanderBankAccess) {
+        SantanderCard.setGrantBankAccess(allowSantanderBankAccess, Authenticate.getUser(), getMessage(santanderBankTitle), getMessage(santanderBankMessage));
+
+        redirAttrs.addFlashAttribute("success", true);
+        return "redirect:/authorize-personal-data-access/review";
+    }
+
+    @RequestMapping(value = "/review/cgd-bank", method = RequestMethod.POST)
+    public String reviewCgdCardDataAuthorizationSubmit(RedirectAttributes redirAttrs, @RequestParam boolean allowCgdBankAccess) {
+        CgdCard.setGrantBankAccess(allowCgdBankAccess, getMessage(cgdBankTitle), getMessage(cgdBankMessage));
+
+        redirAttrs.addFlashAttribute("success", true);
+        return "redirect:/authorize-personal-data-access/review";
+    }
+
+    @RequestMapping(value = "/review/bpi-bank", method = RequestMethod.POST)
+    public String reviewBpiCardDataAuthorizationSubmit(RedirectAttributes redirAttrs, @RequestParam boolean allowBpiBankAccess) {
+        BpiCard.setGrantBankAccess(allowBpiBankAccess, Authenticate.getUser(), getMessage(bpiBankTitle), getMessage(bpiBankMessage));
+
+        redirAttrs.addFlashAttribute("success", true);
+        return "redirect:/authorize-personal-data-access/review";
     }
 
     @RequestMapping(value = "santander-card", method = RequestMethod.GET)
     public String santanderCardAuthorization(HttpServletRequest request, Model model) {
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
 
         return checkAuthorizationDetails(model, santanderCardTitle, santanderCardMessage);
     }
@@ -112,7 +168,9 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(value = "/cgd-card", method = RequestMethod.GET)
     public String cgdCardAuthorization(Model model) {
-
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
 
         return checkAuthorizationDetails(model, cgdCardTitle, cgdCardMessage);
     }
@@ -129,6 +187,10 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(value = "/bpi-card", method = RequestMethod.GET)
     public String bpiCardAuthorization(Model model) {
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
+
         return "redirect:/authorize-personal-data-access/santander-bank";
     }
 
@@ -141,6 +203,10 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(value = "/santander-bank", method = RequestMethod.GET)
     public String santanderBankAuthorization(Model model) {
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
+
         return chooseAuthorizationDetails(model, santanderBankTitle, santanderBankMessage);
     }
 
@@ -153,6 +219,9 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(value = "/cgd-bank", method = RequestMethod.GET)
     public String cgdBankAuthorization(Model model) {
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
 
         return chooseAuthorizationDetails(model, cgdBankTitle, cgdBankMessage);
     }
@@ -166,6 +235,9 @@ public class AuthorizePersonalDataAccessController {
 
     @RequestMapping(value = "/bpi-bank", method = RequestMethod.GET)
     public String bpiBankAuthorization(Model model) {
+        if (checkCardDataAuthorizationWorkflowComplete()) {
+            return "redirect://authorize-personal-data-access/review";
+        }
 
         return chooseAuthorizationDetails(model, bpiBankTitle, bpiBankMessage);
     }

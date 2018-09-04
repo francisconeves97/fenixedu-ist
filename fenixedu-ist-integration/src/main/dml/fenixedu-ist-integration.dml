@@ -27,15 +27,15 @@ class CardDataAuthorizationLog extends .org.fenixedu.academic.domain.DomainOpera
 class cgd.CgdCard {
     int serialNumber;
     boolean allowSendDetails;
-    boolean allowSendCardDetails;
-    boolean allowSendBankDetails;
+    Boolean allowSendCardDetails;
+    Boolean allowSendBankDetails;
     DateTime successfulSentData;
 }
 
 class BpiCard {
 	boolean allowSendDetails;
-	boolean allowSendCardDetails;
-	boolean allowSendBankDetails;
+	Boolean allowSendCardDetails;
+	Boolean allowSendBankDetails;
 	DateTime whenAllowChanged;
 	DateTime whenCardAllowChanged;
 	DateTime whenBankAllowChanged;
@@ -43,8 +43,8 @@ class BpiCard {
  
 class SantanderCard {
 	boolean allowSendDetails;
-	boolean allowSendCardDetails;
-    boolean allowSendBankDetails;
+	Boolean allowSendCardDetails;
+    Boolean allowSendBankDetails;
 	DateTime whenAllowChanged;
 	DateTime whenCardAllowChanged;
     DateTime whenBankAllowChanged;

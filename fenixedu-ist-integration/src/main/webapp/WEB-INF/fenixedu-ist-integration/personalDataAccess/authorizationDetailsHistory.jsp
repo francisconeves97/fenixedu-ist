@@ -30,10 +30,10 @@
                     <c:out value="${log.title}" />
                 </td>
                 <td>
-                    <c:out value="${log.body}" escapeXml="false" />
+                    <c:out value="${log.description}" escapeXml="false" />
                 </td>
                 <td>
-                <c:out value="${log.description}" />
+                <c:out value="${log.answer}" />
                 </td>
                 
             </tr>

@@ -27,6 +27,7 @@ import org.fenixedu.bennu.core.security.Authenticate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import pt.ist.fenixedu.integration.domain.BpiCard;
 import pt.ist.fenixedu.integration.domain.CardDataAuthorizationLog;
 import pt.ist.fenixframework.Atomic;
 
@@ -79,7 +80,7 @@ public class CgdCard extends CgdCard_Base {
     }
 
     @Atomic
-    public static CgdCard setGrantCardAccess(final boolean allowCardAccess, String title, String body) {
+    public static CgdCard setGrantCardAccess(final Boolean allowCardAccess, String title, String body) {
         final User user = Authenticate.getUser();
         if (user != null) {
             final int year = Year.now().getValue();
@@ -96,7 +97,7 @@ public class CgdCard extends CgdCard_Base {
     }
 
     @Atomic
-    public static CgdCard setGrantBankAccess(final boolean allowBankAccess, String title, String body) {
+    public static CgdCard setGrantBankAccess(final Boolean allowBankAccess, String title, String body) {
         final User user = Authenticate.getUser();
         if (user != null) {
             final int year = Year.now().getValue();
@@ -118,6 +119,26 @@ public class CgdCard extends CgdCard_Base {
             final int year = Year.now().getValue();
             final CgdCard card = findCardFor(user, year, false);
             return card != null && card.getAllowSendDetails();
+        }
+        return false;
+    }
+
+    public static Boolean getAllowSendBank() {
+        final User user = Authenticate.getUser();
+        if (user != null) {
+            final int year = Year.now().getValue();
+            final CgdCard card = findCardFor(user, year, false);
+            return card != null && card.getAllowSendBankDetails();
+        }
+        return null;
+    }
+
+    public static boolean finishedCardDataAuthorization() {
+        final User user = Authenticate.getUser();
+        if (user != null) {
+            final int year = Year.now().getValue();
+            final CgdCard card = findCardFor(user, year, false);
+            return card != null && card.getAllowSendCardDetails() != null && card.getAllowSendBankDetails() != null;
         }
         return false;
     }

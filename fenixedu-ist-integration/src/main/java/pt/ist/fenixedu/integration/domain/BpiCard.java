@@ -63,6 +63,31 @@ public class BpiCard extends BpiCard_Base {
         }
     }
 
+    private static BpiCard getUserCard(User user) {
+        if (user != null) {
+            return user.getBpiCard();
+        }
+        return null;
+    }
+
+    public static boolean getAllowSendBankDetails(User user) {
+        BpiCard card = BpiCard.getUserCard(user);
+        if (card != null) {
+            return card.getAllowSendBankDetails() != null && card.getAllowSendBankDetails();
+        }
+        return false;
+    }
+
+    public static boolean finishedCardDataAuthorization(User user) {
+        if (user != null) {
+            final BpiCard card = user.getBpiCard();
+            if (card != null) {
+                return card.getAllowSendBankDetails() != null;
+            }
+        }
+        return false;
+    }
+
     @Override
     public void setAllowSendDetails(boolean allow) {
         super.setAllowSendDetails(allow);
@@ -70,13 +95,13 @@ public class BpiCard extends BpiCard_Base {
     }
 
     @Override
-    public void setAllowSendCardDetails(boolean allow) {
+    public void setAllowSendCardDetails(Boolean allow) {
         super.setAllowSendCardDetails(allow);
         setWhenCardAllowChanged(new DateTime());
     }
 
     @Override
-    public void setAllowSendBankDetails(boolean allow) {
+    public void setAllowSendBankDetails(Boolean allow) {
         super.setAllowSendBankDetails(allow);
         setWhenBankAllowChanged(new DateTime());
     }

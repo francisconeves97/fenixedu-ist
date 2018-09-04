@@ -64,6 +64,29 @@ public class SantanderCard extends SantanderCard_Base {
         }
     }
 
+    private static SantanderCard getUserCard(User user) {
+        if (user != null) {
+            return user.getSantanderCard();
+        }
+        return null;
+    }
+
+    public static boolean getAllowSendBankDetails(User user) {
+        SantanderCard card = SantanderCard.getUserCard(user);
+        if (card != null) {
+            return card.getAllowSendBankDetails() != null && card.getAllowSendBankDetails();
+        }
+        return false;
+    }
+
+    public static boolean finishedCardDataAuthorization(User user) {
+        SantanderCard card = SantanderCard.getUserCard(user);
+        if (card != null) {
+            return card.getAllowSendCardDetails() != null && card.getAllowSendBankDetails() != null;
+        }
+        return false;
+    }
+
     @Override
     public void setAllowSendDetails(boolean allow) {
         super.setAllowSendDetails(allow);
@@ -71,13 +94,13 @@ public class SantanderCard extends SantanderCard_Base {
     }
 
     @Override
-    public void setAllowSendCardDetails(boolean allow) {
+    public void setAllowSendCardDetails(Boolean allow) {
         super.setAllowSendCardDetails(allow);
         setWhenCardAllowChanged(new DateTime());
     }
 
     @Override
-    public void setAllowSendBankDetails(boolean allow) {
+    public void setAllowSendBankDetails(Boolean allow) {
         super.setAllowSendBankDetails(allow);
         setWhenBankAllowChanged(new DateTime());
     }
