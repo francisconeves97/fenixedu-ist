@@ -45,8 +45,8 @@ import pt.ist.registration.process.domain.RegistrationDeclarationFile;
 import pt.ist.registration.process.domain.RegistrationDeclarationFileState;
 import pt.ist.registration.process.handler.CandidacySignalHandler;
 import pt.ist.registration.process.handler.EmployerInitializer;
-import pt.tecnico.ulisboa.dsi.employer.exception.JobFailedException;
-import pt.tecnico.ulisboa.dsi.employer.job.Job;
+import org.fenixedu.employer.exception.JobFailedException;
+import org.fenixedu.employer.job.Job;
 
 @Service
 public class SignCertAndStoreService {

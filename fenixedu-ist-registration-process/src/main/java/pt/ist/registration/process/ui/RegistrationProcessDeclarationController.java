@@ -50,8 +50,14 @@ public class RegistrationProcessDeclarationController {
     @Autowired
     private RegistrationDeclarationCreatorService documentService;
 
+    @RequestMapping(value="", method = RequestMethod.GET)
+    public String landing() {
+        return "registration-process/landing";
+    }
+
     @RequestMapping(value = "/view-files/registration/{registration}", method = RequestMethod.GET)
     public String list(@PathVariable Registration registration, Model model) {
+
         return listFiles(model, registration);
     }
     
@@ -211,7 +217,8 @@ public class RegistrationProcessDeclarationController {
             }
 
         } catch (Exception e) {
-            errors.add("label.declaration.retry.workflow.error.Exception");
+            e.printStackTrace();
+            errors.add(e.getMessage());
             return listFiles(model, registration, errors);
         }
 

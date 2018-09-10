@@ -2,9 +2,9 @@ package pt.ist.registration.process.handler;
 
 import org.springframework.stereotype.Component;
 
-import pt.tecnico.ulisboa.dsi.employer.Employer;
-import pt.tecnico.ulisboa.dsi.employer.backoff.ExponentialBackoff;
-import pt.tecnico.ulisboa.dsi.employer.workflow.SimpleWorkflow;
+import org.fenixedu.employer.Employer;
+import org.fenixedu.employer.backoff.ExponentialBackoff;
+import org.fenixedu.employer.workflow.SimpleWorkflow;
 
 @Component
 public class EmployerInitializer {

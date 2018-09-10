@@ -79,9 +79,9 @@
             <version>${version.papyrus.client}</version>
         </dependency>
         <dependency>
-            <groupId>pt.ulisboa.tecnico.dsi</groupId>
+            <groupId>org.fenixedu</groupId>
 			<artifactId>employer</artifactId>
-			<version>0.8.0</version>
+			<version>1.0.0</version>
         </dependency>
     </dependencies>
 
