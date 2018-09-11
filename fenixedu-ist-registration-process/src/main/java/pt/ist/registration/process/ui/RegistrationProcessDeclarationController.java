@@ -12,6 +12,9 @@ import org.fenixedu.academic.domain.ExecutionYear;
 import org.fenixedu.academic.domain.Person;
 import org.fenixedu.academic.domain.degree.DegreeType;
 import org.fenixedu.academic.domain.student.Registration;
+import org.fenixedu.academic.domain.student.RegistrationDataByExecutionYear;
+import org.fenixedu.bennu.rendering.annotations.BennuIntersection;
+import org.fenixedu.bennu.rendering.annotations.BennuIntersections;
 import org.fenixedu.bennu.spring.portal.SpringApplication;
 import org.fenixedu.bennu.spring.portal.SpringFunctionality;
 import org.joda.time.LocalDate;
@@ -33,10 +36,14 @@ import pt.ist.registration.process.ui.service.RegistrationDeclarationCreatorServ
 import pt.ist.registration.process.ui.service.RegistrationProcessDeclarationsService;
 import pt.ist.registration.process.ui.service.SignCertAndStoreService;
 
+@BennuIntersections({
+        @BennuIntersection(location = "registration.process", position = "actions",
+                file= "templates/registrationProcessDeclarationLink.html")
+})
 @SpringApplication(group = "logged", path = "registration-process", title = "title.registration.process.signed.declaration")
 @SpringFunctionality(app = RegistrationProcessDeclarationController.class,
         title = "title.registration.process.signed.declaration")
-@RequestMapping("/registration-process-signed-declaration")
+@RequestMapping("/signed-documents")
 public class RegistrationProcessDeclarationController {
 
     private static final Logger logger = LoggerFactory.getLogger(RegistrationProcessDeclarationController.class);
@@ -50,44 +57,13 @@ public class RegistrationProcessDeclarationController {
     @Autowired
     private RegistrationDeclarationCreatorService documentService;
 
-    @RequestMapping(value="", method = RequestMethod.GET)
-    public String landing() {
-        return "registration-process/landing";
-    }
-
-    @RequestMapping(value = "/view-files/registration/{registration}", method = RequestMethod.GET)
+    @RequestMapping(value = "/registration/{registration}", method = RequestMethod.GET)
     public String list(@PathVariable Registration registration, Model model) {
 
         return listFiles(model, registration);
     }
     
-    @RequestMapping(value = "/view-files/registration/{registration}/download/file/{declarationFile}", method = RequestMethod.GET)
-    public String downloadFile(@PathVariable Registration registration, 
-            @PathVariable RegistrationDeclarationFile declarationFile, Model model,
-            HttpServletResponse httpServletResponse) {
-
-        try {
-            final byte[] fileContent = declarationFile.getContent();
-            if (fileContent != null) {
-                httpServletResponse.setContentType(declarationFile.getContentType());
-                httpServletResponse.setHeader("Content-disposition", "attachment;filename=" + declarationFile.getFilename());
-                final OutputStream outputStream = httpServletResponse.getOutputStream();
-                outputStream.write(fileContent);
-                outputStream.close();
-            } else {
-                List<String> errors = new ArrayList<String>();
-                errors.add("label.declaration.generate.file.error.file.not.found");
-                return listFiles(model, registration, errors);
-            }
-        } catch (Exception e) {
-            List<String> errors = new ArrayList<String>();
-            errors.add("label.declaration.generate.file.error.ioexception");
-            return listFiles(model, registration, errors);
-        }
-        return null;
-    }
-    
-    @RequestMapping(value = "/generate-declaration/registration/{registration}", method = RequestMethod.POST)
+    @RequestMapping(value = "/registration/{registration}", method = RequestMethod.POST)
     public String generateRegistrationDeclaration(@PathVariable Registration registration,
             @ModelAttribute DeclarationTemplateInputFormBean bean, Model model) {
 
@@ -100,13 +76,13 @@ public class RegistrationProcessDeclarationController {
         final DeclarationTemplate template = bean.getDeclarationTemplate();
         
         final Set<ExecutionYear> registrationExecutionYears = registration.getRegistrationDataByExecutionYearSet().stream()
-                .map(p -> p.getExecutionYear()).collect(Collectors.toSet());
+                .map(RegistrationDataByExecutionYear::getExecutionYear).collect(Collectors.toSet());
 
         if (registrationProcessDeclarationsService.getSub23DeclarationTemplates().contains(template)) {
             final YearMonthDay ymd = person.getDateOfBirthYearMonthDay();
             final LocalDate today = new LocalDate();
 
-            if (ymd != null && ymd.plusYears(24).isBefore(today)) {
+            if (ymd == null || ymd.plusYears(24).isBefore(today)) {
                 errors.add("label.declaration.generate.file.error.sub23.not.applicable");
             }
         }        
@@ -152,10 +128,10 @@ public class RegistrationProcessDeclarationController {
             return listFiles(model, registration, errors);
         }
 
-        return "redirect:" + "/registration-process-signed-declaration/view-files/registration/" + registration.getExternalId();
+        return "redirect:/signed-documents/registration/" + registration.getExternalId();
     }
 
-    @RequestMapping(value = "/retry-declaration-workflow/registration/{registration}/file/{declarationFile}",
+    @RequestMapping(value = "/registration/{registration}/file/{declarationFile}/retry",
             method = RequestMethod.GET)
     public String retryWorkflow(@PathVariable Registration registration,
             @PathVariable RegistrationDeclarationFile declarationFile, Model model) {
@@ -222,7 +198,7 @@ public class RegistrationProcessDeclarationController {
             return listFiles(model, registration, errors);
         }
 
-        return "redirect:" + "/registration-process-signed-declaration/view-files/registration/" + registration.getExternalId();
+        return "redirect:/signed-documents/registration/" + registration.getExternalId();
     }
 
     public String listFiles(Model model, Registration registration) {

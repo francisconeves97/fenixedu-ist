@@ -4,6 +4,8 @@ import java.util.Locale;
 import java.util.Optional;
 
 import org.fenixedu.academic.domain.ExecutionYear;
+import org.fenixedu.academic.domain.accessControl.AcademicAuthorizationGroup;
+import org.fenixedu.academic.domain.accessControl.academicAdministration.AcademicOperationType;
 import org.fenixedu.academic.domain.student.Registration;
 import org.fenixedu.bennu.core.domain.User;
 import org.fenixedu.bennu.core.security.Authenticate;
@@ -36,7 +38,7 @@ public class RegistrationDeclarationFile extends RegistrationDeclarationFile_Bas
 
     @Override
     public boolean isAccessible(User user) {
-        return false;
+        return AcademicAuthorizationGroup.get(AcademicOperationType.MANAGE_DOCUMENTS, getRegistration().getDegree()).isMember(user);
     }
 
     @Atomic(mode = TxMode.WRITE)

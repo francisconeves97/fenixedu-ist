@@ -24,6 +24,37 @@
 <%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core"%>
 <%@ taglib prefix="form" uri="http://www.springframework.org/tags/form" %>
 <%@ taglib prefix="spring" uri="http://www.springframework.org/tags" %>
+<%@ taglib uri="http://struts.apache.org/tags-bean" prefix="bean" %>
+
+<style>
+	.overall-description {
+		border: 1px solid #DADADA;
+		padding: 2rem;
+		margin: 4rem 0;
+	}
+
+	.overall-description dt {
+		width: 15rem;
+		text-align: right;
+		margin-right: 20px;
+	}
+
+	 dl {
+		 display: -webkit-box;
+		 display: -ms-flexbox;
+		 display: flex;
+		 -webkit-box-orient: horizontal;
+		 -webkit-box-direction: normal;
+		 -ms-flex-flow: row nowrap;
+		 flex-flow: row nowrap;
+		 -webkit-box-pack: justify;
+		 -ms-flex-pack: justify;
+	 }
+	dl dd {
+		text-align: right;
+	}
+
+</style>
 
 <div class="page-header">
     <h2>
@@ -44,13 +75,32 @@
 	<br>
 </c:if>
 
+<div class="overall-description">
+	<dl>
+		<dt><bean:message key="label.username" bundle="ACADEMIC_OFFICE_RESOURCES"/>:</dt>
+		<dd><c:out value="${registration.person.username}"/></dd>
+	</dl>
+	<dl>
+		<dt><bean:message key="label.number" bundle="ACADEMIC_OFFICE_RESOURCES"/>:</dt>
+		<dd><c:out value="${registration.number}"/></dd>
+	</dl>
+	<dl>
+		<dt><bean:message key="label.degree" bundle="ACADEMIC_OFFICE_RESOURCES"/>:</dt>
+		<dd><c:out value="${registration.degreeNameWithDescription}"/></dd>
+	</dl>
+	<dl>
+		<dt><bean:message key="label.currentState" bundle="ACADEMIC_OFFICE_RESOURCES"/>:</dt>
+		<dd><c:out value="${registration.activeStateType.description}"/></dd>
+	</dl>
+</div>
+
 <%-- Display Declarations Interface --%>
 
 <p> 
 	<strong> <spring:message code="label.declaration.view.file.view.title"/> </strong> 
 </p>
 
-<c:if test="${not declarationRegistrationFiles.isEmpty()}">
+<c:if test="${not empty declarationRegistrationFiles}">
 	<table class="tstyle1 thlight thright mtop025 table">
 	    <thead>
 	        <th><spring:message code="label.declaration.view.file.requestor" /></th>
@@ -67,10 +117,10 @@
 	        <c:forEach var="file" items="${declarationRegistrationFiles}">               
 		    	<tr>
 	        		<td>
-	        			<c:if test="${file.creator == null}">
+	        			<c:if test="${empty file.creator}">
 	        				<spring:message code="label.declaration.view.not.defined"/>
 	        			</c:if>
-	        			<c:if test="${file.creator != null}">
+	        			<c:if test="${not empty file.creator}">
 	        				<c:out value="${file.creator.displayName}" />
 	        			</c:if>	        			
 	        		</td>
@@ -87,10 +137,10 @@
 	        			<c:out value="${file.executionYear.name}"/>
 	        		</td>
 	        		<td>
-	        			<c:if test="${file.state == null}">
+	        			<c:if test="${empty file.state}">
 	        				<spring:message code="label.declaration.view.not.defined"/>
 	        			</c:if>
-	        			<c:if test="${file.state != null}">
+	        			<c:if test="${not empty file.state}">
 	        				<c:out value="${file.state.localizedName}"/>
 	        			</c:if>
 	        		</td>	        		
@@ -99,18 +149,17 @@
 	        		</td>
 	        		<td>
 	        			<c:if test="${file.state != 'STORED'}">
-	        				<spring:url var="retryWorkflow" value="/registration-process-signed-declaration/retry-declaration-workflow/registration/${registration.externalId}/file/${file.externalId}" />
+	        				<spring:url var="retryWorkflow" value="/signed-documents/registration/${registration.externalId}/file/${file.externalId}/retry" />
 							<a href="${retryWorkflow}"><spring:message code="label.declaration.view.file.retry.workflow"/></a>
 	        			</c:if>	  
 	        		</td>
 	        		<td>
-	        			<c:if test="${file.downloadSignedFileLink == null}">
-	        				<spring:url var="downloadFile" value="/registration-process-signed-declaration/view-files/registration/${registration.externalId}/download/file/${file.externalId}" />
-							<a href="${downloadFile}"><spring:message code="label.declaration.view.file.view"/></a>
-	        			</c:if>
-	        			<c:if test="${file.downloadSignedFileLink != null}">
+						<spring:url var="downloadFile" value="/downloadFile/${file.externalId}" />
+						<p><a href="${downloadFile}"><spring:message code="label.declaration.view.file.view"/></a></p>
+
+						<c:if test="${not empty file.downloadSignedFileLink}">
 	        				<spring:url var="downloadFileFromDrive" value="${file.downloadSignedFileLink}" />
-							<a href="${downloadFileFromDrive}"><spring:message code="label.declaration.view.file.view"/></a>
+							<p><a href="${downloadFileFromDrive}"><spring:message code="label.declaration.view.signed.file.view"/></a></p>
 	        			</c:if>             	            	
 	        		</td>
 	        	</tr>            
@@ -119,7 +168,7 @@
 	</table>
 </c:if>
 
-<c:if test="${declarationRegistrationFiles.isEmpty()}">
+<c:if test="${empty declarationRegistrationFiles}">
 	<em> <spring:message code="label.declaration.view.file.no.files.generated"/></em>
 	<br>
 	<br>
@@ -133,7 +182,7 @@
 		<strong> <spring:message code="label.declaration.generate.file.title"/> </strong>
 </p>
   
-<spring:url var="requestDeclaration" value="/registration-process-signed-declaration/generate-declaration/registration/${registration.externalId}"/>
+<spring:url var="requestDeclaration" value="/signed-documents/registration/${registration.externalId}"/>
 <form:form modelAttribute="declarationTemplateInputFormBean" method="POST" action="${requestDeclaration}" class="form-horizontal">
 	${csrf.field()}
 	
