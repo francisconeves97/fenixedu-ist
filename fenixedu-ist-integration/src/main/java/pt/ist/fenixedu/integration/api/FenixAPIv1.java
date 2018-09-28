@@ -53,6 +53,8 @@ import org.fenixedu.academic.domain.accessControl.ActiveTeachersGroup;
 import org.fenixedu.academic.domain.accessControl.AllAlumniGroup;
 import org.fenixedu.academic.domain.accounting.Entry;
 import org.fenixedu.academic.domain.accounting.Event;
+import org.fenixedu.academic.domain.accounting.calculator.Debt;
+import org.fenixedu.academic.domain.accounting.calculator.DebtInterestCalculator;
 import org.fenixedu.academic.domain.accounting.paymentCodes.AccountingEventPaymentCode;
 import org.fenixedu.academic.domain.contacts.EmailAddress;
 import org.fenixedu.academic.domain.contacts.WebAddress;
@@ -673,15 +675,15 @@ public class FenixAPIv1 {
 
         for (Event event : notPayedEvents) {
 
-            for (AccountingEventPaymentCode accountingEventPaymentCode : event.getNonProcessedPaymentCodes()) {
-                String id = accountingEventPaymentCode.getExternalId();
-                String description = accountingEventPaymentCode.getDescription();
-                String startDate = formatDay.print(accountingEventPaymentCode.getStartDate()) + " 00:00";
-                String endDate = formatDay.print(accountingEventPaymentCode.getEndDate()) + " 23:59";
-                String entity = accountingEventPaymentCode.getEntityCode();
-                String reference = accountingEventPaymentCode.getFormattedCode();
-                String amount = accountingEventPaymentCode.getMinAmount().getAmountAsString();
-                notPayed.add(new PendingEvent(id, description, new FenixPeriod(startDate, endDate), entity, reference, amount));
+            DebtInterestCalculator calculator = event.getDebtInterestCalculator(DateTime.now());
+            String description = event.getDescription().toString();
+
+            for (Debt debt : calculator.getDebtsOrderedByDueDate()) {
+                String id = debt.getId();
+                LocalDate debtDueDate = debt.getDueDate();
+                String amount = debt.getTotalOpenAmount().toPlainString();
+
+                notPayed.add(new PendingEvent(id, description, new FenixPeriod(null, debtDueDate), null, null, amount));
             }
         }
 
