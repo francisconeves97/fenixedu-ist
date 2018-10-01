@@ -148,6 +148,7 @@ public class CurriculumValidationDocumentRequestsManagementDispatchAction extend
                     data);
             response.setContentLength(data.length);
             response.setContentType("application/pdf");
+            response.setCharacterEncoding("ISO-8859-1");
             response.addHeader("Content-Disposition", "attachment; filename=" + documents.iterator().next().getReportFileName()
                     + ".pdf");
 
