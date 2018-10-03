@@ -30,13 +30,13 @@ public class FenixPeriod {
     }
 
     public FenixPeriod(final String start, final String end) {
-        this.start = start;
-        this.end = end;
+        this.start = start == null ? "" : start;
+        this.end = end == null ? "" : end;
     }
 
     public FenixPeriod(final LocalDate start, final LocalDate end) {
-        this.start = start == null ? null : start.toString("yyyy-MM-dd");
-        this.end = end == null ? null : end.toString("yyyy-MM-dd");
+        this.start = start == null ? "" : start.toString("dd/MM/yyyy");
+        this.end = end == null ? "" : end.toString("dd/MM/yyyy");
     }
 
     public String getStart() {

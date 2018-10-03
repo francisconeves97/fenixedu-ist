@@ -673,17 +673,18 @@ public class FenixAPIv1 {
         List<Event> notPayedEvents = calculateNotPayedEvents(person);
         List<PendingEvent> notPayed = new ArrayList<>();
 
-        for (Event event : notPayedEvents) {
+        for (Event event: notPayedEvents) {
 
             DebtInterestCalculator calculator = event.getDebtInterestCalculator(DateTime.now());
             String description = event.getDescription().toString();
 
             for (Debt debt : calculator.getDebtsOrderedByDueDate()) {
                 String id = debt.getId();
+                LocalDate debtCreation = debt.getCreated().toLocalDate();
                 LocalDate debtDueDate = debt.getDueDate();
                 String amount = debt.getTotalOpenAmount().toPlainString();
 
-                notPayed.add(new PendingEvent(id, description, new FenixPeriod(null, debtDueDate), null, null, amount));
+                notPayed.add(new PendingEvent(id, description, new FenixPeriod(formatDay.print(debtCreation), formatDay.print(debtDueDate)), null, null, amount));
             }
         }
 
