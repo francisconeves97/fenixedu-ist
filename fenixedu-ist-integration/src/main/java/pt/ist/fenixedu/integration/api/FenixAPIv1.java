@@ -56,6 +56,7 @@ import org.fenixedu.academic.domain.accounting.Event;
 import org.fenixedu.academic.domain.accounting.calculator.Debt;
 import org.fenixedu.academic.domain.accounting.calculator.DebtInterestCalculator;
 import org.fenixedu.academic.domain.accounting.paymentCodes.AccountingEventPaymentCode;
+import org.fenixedu.academic.domain.accounting.paymentCodes.EventPaymentCodeEntry;
 import org.fenixedu.academic.domain.contacts.EmailAddress;
 import org.fenixedu.academic.domain.contacts.WebAddress;
 import org.fenixedu.academic.domain.degreeStructure.BibliographicReferences.BibliographicReference;
@@ -683,8 +684,18 @@ public class FenixAPIv1 {
                 LocalDate debtCreation = debt.getCreated().toLocalDate();
                 LocalDate debtDueDate = debt.getDueDate();
                 String amount = debt.getTotalOpenAmount().toPlainString();
+                EventPaymentCodeEntry codeEntry = event.getAvailablePaymentCodeEntry().orElse(null);
+                String reference = null;
+                String entity = null;
 
-                notPayed.add(new PendingEvent(id, description, new FenixPeriod(formatDay.print(debtCreation), formatDay.print(debtDueDate)), null, null, amount));
+                if (codeEntry != null) {
+                    reference = codeEntry.getPaymentCode().getFormattedCode();
+                    entity = codeEntry.getPaymentCode().getEntityCode();
+                }
+
+
+
+                notPayed.add(new PendingEvent(id, description, new FenixPeriod(formatDay.print(debtCreation), formatDay.print(debtDueDate)), entity, reference, amount));
             }
         }
 
