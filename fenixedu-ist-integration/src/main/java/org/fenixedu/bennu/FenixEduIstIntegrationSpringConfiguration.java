@@ -19,10 +19,17 @@
 package org.fenixedu.bennu;
 
 import org.fenixedu.bennu.spring.BennuSpringModule;
+import org.fenixedu.otlis.core.service.StudentInfoService;
+import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableAsync;
+import pt.ist.fenixedu.integration.otlis.ISTStudentInfoService;
 
 @EnableAsync
 @BennuSpringModule(basePackages = { "pt.ist.fenixedu.integration.ui.spring" }, bundles = "FenixEduIstIntegrationResources")
 public class FenixEduIstIntegrationSpringConfiguration {
 
+    @Bean
+    public StudentInfoService studentInfoService() {
+        return new ISTStudentInfoService();
+    }
 }

@@ -166,6 +166,11 @@
             <artifactId>ical4j</artifactId>
             <version>${version.org.mnode.ical4j.ical4j}</version>
         </dependency>
+        <dependency>
+            <groupId>org.fenixedu</groupId>
+            <artifactId>fenixedu-otlis</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
     </dependencies>
 
     <repositories>
