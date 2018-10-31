@@ -104,23 +104,7 @@ public class ISTFenixAPIv1 extends FenixAPIv1Impl {
     protected Set<FenixPerson.FenixRole> getPersonRoles(Person person, PersonInformationBean pib) {
         User user = person.getUser();
 
-        final Set<FenixPerson.FenixRole> roles = new HashSet<>();
-
-        if (new ActiveTeachersGroup().isMember(user)) {
-            roles.add(new FenixPerson.TeacherFenixRole(pib.getTeacherDepartment()));
-        }
-
-        if (new ActiveStudentsGroup().isMember(user)) {
-            roles.add(new FenixPerson.StudentFenixRole(pib.getStudentRegistrations()));
-        }
-
-        if (new AllAlumniGroup().isMember(user)) {
-            ArrayList<Registration> concludedRegistrations = new ArrayList<>();
-            if (person.getStudent() != null) {
-                concludedRegistrations.addAll(person.getStudent().getConcludedRegistrations());
-            }
-            roles.add(new FenixPerson.AlumniFenixRole(concludedRegistrations));
-        }
+        final Set<FenixPerson.FenixRole> roles = super.getPersonRoles(person, pib);
 
         if (new ActiveEmployees().isMember(user)) {
             roles.add(new FenixPerson.EmployeeFenixRole());
