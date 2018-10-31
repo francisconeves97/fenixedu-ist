@@ -20,7 +20,7 @@ package pt.ist.fenixedu.integration.api.beans.publico;
 
 import org.joda.time.LocalDate;
 
-import pt.ist.fenixedu.integration.api.FenixAPIv1;
+import pt.ist.fenixedu.integration.api.ISTFenixAPIv1;
 
 public class FenixPeriod {
 
@@ -37,8 +37,8 @@ public class FenixPeriod {
     }
 
     public FenixPeriod(final LocalDate start, final LocalDate end) {
-        this.start = start == null ? "" : start.toDateTimeAtStartOfDay().toString(FenixAPIv1.dayHourPattern);
-        this.end = end == null ? "" : end.toDateTimeAtStartOfDay().toString(FenixAPIv1.dayHourPattern);
+        this.start = start == null ? "" : start.toDateTimeAtStartOfDay().toString(ISTFenixAPIv1.dayHourPattern);
+        this.end = end == null ? "" : end.toDateTimeAtStartOfDay().toString(ISTFenixAPIv1.dayHourPattern);
     }
 
     public String getStart() {

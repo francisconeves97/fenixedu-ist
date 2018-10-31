@@ -38,7 +38,7 @@ public class FenixParking {
      */
 
     @GET
-    @Produces(FenixAPIv1.JSON_UTF8)
+    @Produces(ISTFenixAPIv1.JSON_UTF8)
     public String parking() {
         try {
             return client.target(FenixEduIstIntegrationConfiguration.getConfiguration().getApiParkingUrl())

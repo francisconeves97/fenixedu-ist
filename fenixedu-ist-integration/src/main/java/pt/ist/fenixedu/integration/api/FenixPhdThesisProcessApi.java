@@ -70,8 +70,8 @@ public class FenixPhdThesisProcessApi {
 	private static final String DATETIME_FORMAT = DATE_FORMAT + " HH:mm:ss";
 
     @GET
-    @Produces(FenixAPIv1.JSON_UTF8)
-    @OAuthEndpoint(FenixAPIv1.DEGREE_CURRICULAR_MANAGEMENT)
+    @Produces(ISTFenixAPIv1.JSON_UTF8)
+    @OAuthEndpoint(ISTFenixAPIv1.DEGREE_CURRICULAR_MANAGEMENT)
     public String list(@QueryParam("academicTerm") final String academicTerm, @QueryParam("department") final String department,
             @QueryParam("username") final String username) {
         if (!Strings.isNullOrEmpty(username)) {

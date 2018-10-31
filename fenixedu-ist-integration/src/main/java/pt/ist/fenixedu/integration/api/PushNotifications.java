@@ -36,7 +36,7 @@ public class PushNotifications {
     @POST
     @Path("/register")
     @Consumes(MediaType.APPLICATION_JSON)
-    @OAuthEndpoint(FenixAPIv1.PERSONAL_SCOPE)
+    @OAuthEndpoint(ISTFenixAPIv1.PERSONAL_SCOPE)
     public Response register(JsonElement payload) {
 
         JsonObject request = payload.getAsJsonObject();

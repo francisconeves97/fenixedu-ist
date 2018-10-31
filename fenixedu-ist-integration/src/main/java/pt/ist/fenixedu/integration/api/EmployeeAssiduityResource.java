@@ -46,7 +46,7 @@ public class EmployeeAssiduityResource {
     public static final String dayPattern = "yyyy-MM-dd";
 
     @GET
-    @Produces(FenixAPIv1.JSON_UTF8)
+    @Produces(ISTFenixAPIv1.JSON_UTF8)
     @Path("/employee")
     @OAuthEndpoint(ASSIDUITY_SCOPE)
     public String getEmployeeAssiduityInformation(final @QueryParam("date") String date, final @QueryParam("username") String username) {
@@ -56,7 +56,7 @@ public class EmployeeAssiduityResource {
     }
 
     @GET
-    @Produces(FenixAPIv1.JSON_UTF8)
+    @Produces(ISTFenixAPIv1.JSON_UTF8)
     @Path("/responsible")
     @OAuthEndpoint(ASSIDUITY_SCOPE)
     public String getAssiduityInformationForEmployees(final @QueryParam("date") String date) {

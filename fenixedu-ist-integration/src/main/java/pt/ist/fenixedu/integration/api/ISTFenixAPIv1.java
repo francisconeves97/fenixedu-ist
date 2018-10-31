@@ -25,21 +25,30 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
 import org.fenixedu.academic.domain.*;
+import org.fenixedu.academic.domain.accessControl.ActiveStudentsGroup;
+import org.fenixedu.academic.domain.accessControl.ActiveTeachersGroup;
+import org.fenixedu.academic.domain.accessControl.AllAlumniGroup;
 import org.fenixedu.academic.domain.degreeStructure.CourseGroup;
 import org.fenixedu.academic.domain.organizationalStructure.Unit;
+import org.fenixedu.academic.domain.student.Registration;
 import org.fenixedu.academic.domain.time.calendarStructure.AcademicInterval;
+import org.fenixedu.api.FenixAPIv1;
+import org.fenixedu.api.FenixAPIv1Impl;
+import org.fenixedu.api.beans.FenixPerson;
 import org.fenixedu.bennu.core.domain.Avatar;
 import org.fenixedu.bennu.core.domain.Bennu;
 import org.fenixedu.bennu.core.domain.User;
 import org.fenixedu.bennu.core.i18n.BundleUtil;
 import org.fenixedu.bennu.core.security.Authenticate;
 import org.fenixedu.bennu.oauth.annotation.OAuthEndpoint;
+import org.fenixedu.dto.PersonInformationBean;
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.joda.time.YearMonthDay;
 import org.joda.time.format.DateTimeFormat;
 import org.joda.time.format.DateTimeFormatter;
 import pt.ist.fenixedu.contracts.domain.Employee;
+import pt.ist.fenixedu.contracts.domain.accessControl.ActiveEmployees;
 import pt.ist.fenixedu.contracts.domain.organizationalStructure.Contract;
 import pt.ist.fenixedu.contracts.domain.personnelSection.contracts.PersonContractSituation;
 import pt.ist.fenixedu.contracts.domain.personnelSection.contracts.PersonProfessionalData;
@@ -60,7 +69,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Path("/fenix/v1")
-public class FenixAPIv1 {
+public class ISTFenixAPIv1 extends FenixAPIv1Impl {
 
     public final static String PERSONAL_SCOPE = "INFO";
     public final static String DEGREE_CURRICULAR_MANAGEMENT = "DEGREE_CURRICULAR_MANAGEMENT";
@@ -89,6 +98,35 @@ public class FenixAPIv1 {
         errorObject.addProperty("error", error);
         errorObject.addProperty("description", description);
         return new WebApplicationException(Response.status(status).entity(errorObject.toString()).build());
+    }
+
+    @Override
+    protected Set<FenixPerson.FenixRole> getPersonRoles(Person person, PersonInformationBean pib) {
+        User user = person.getUser();
+
+        final Set<FenixPerson.FenixRole> roles = new HashSet<>();
+
+        if (new ActiveTeachersGroup().isMember(user)) {
+            roles.add(new FenixPerson.TeacherFenixRole(pib.getTeacherDepartment()));
+        }
+
+        if (new ActiveStudentsGroup().isMember(user)) {
+            roles.add(new FenixPerson.StudentFenixRole(pib.getStudentRegistrations()));
+        }
+
+        if (new AllAlumniGroup().isMember(user)) {
+            ArrayList<Registration> concludedRegistrations = new ArrayList<>();
+            if (person.getStudent() != null) {
+                concludedRegistrations.addAll(person.getStudent().getConcludedRegistrations());
+            }
+            roles.add(new FenixPerson.AlumniFenixRole(concludedRegistrations));
+        }
+
+        if (new ActiveEmployees().isMember(user)) {
+            roles.add(new FenixPerson.EmployeeFenixRole());
+        }
+
+        return roles;
     }
 
     @GET
@@ -124,7 +162,7 @@ public class FenixAPIv1 {
             return unit;
         }
         return unit.getParentUnits().stream()
-                .map(FenixAPIv1::getSectionOrScientificArea)
+                .map(ISTFenixAPIv1::getSectionOrScientificArea)
                 .filter(Objects::nonNull).findFirst().orElse(null);
     }
 
@@ -165,9 +203,9 @@ public class FenixAPIv1 {
     private static Unit getPersonDepartmentArea(Employee employee, AcademicInterval interval, boolean direct, Unit defaultArea) {
         if (employee != null) {
             Stream<Contract> contracts = employee.getWorkingContracts(interval.getBeginYearMonthDayWithoutChronology(), interval.getEndYearMonthDayWithoutChronology()).stream();
-            Optional<Unit> workingUnit = getLongestLasting(Contract::getWorkingUnit, contracts, FenixAPIv1::getDuration);
+            Optional<Unit> workingUnit = getLongestLasting(Contract::getWorkingUnit, contracts, ISTFenixAPIv1::getDuration);
             if (!direct) {
-                workingUnit = workingUnit.map(FenixAPIv1::getSectionOrScientificArea);
+                workingUnit = workingUnit.map(ISTFenixAPIv1::getSectionOrScientificArea);
             }
             if (workingUnit.isPresent()) {
                 return workingUnit.get();
@@ -192,7 +230,7 @@ public class FenixAPIv1 {
         FenixDepartment.FenixDepartmentMember member = getFenixDepartmentMember(person);
 
         Stream<TeacherAuthorization> authorizations = person.getTeacher().getTeacherAuthorizationStream().filter(ta -> overlaps(ta, interval));
-        TeacherCategory category = getLongestLasting(TeacherAuthorization::getTeacherCategory, authorizations, FenixAPIv1::getDuration).get();
+        TeacherCategory category = getLongestLasting(TeacherAuthorization::getTeacherCategory, authorizations, ISTFenixAPIv1::getDuration).get();
 
         member.setRole(localizedName(CategoryType.TEACHER));
         member.setCategory(category.getName().getContent());
@@ -210,7 +248,7 @@ public class FenixAPIv1 {
         String category = "";
         Optional<ProfessionalCategory> data = Optional.ofNullable(person.getPersonProfessionalData())
                 .map(PersonProfessionalData::getGiafProfessionalData)
-                .flatMap(gpd -> getLongestLasting(PersonContractSituation::getProfessionalCategory, gpd.getPersonContractSituationsSet().stream().filter(s -> overlaps(s, interval)), FenixAPIv1::getDuration));
+                .flatMap(gpd -> getLongestLasting(PersonContractSituation::getProfessionalCategory, gpd.getPersonContractSituationsSet().stream().filter(s -> overlaps(s, interval)), ISTFenixAPIv1::getDuration));
         if (data.isPresent()) {
             ProfessionalCategory pcat = data.get();
             type = pcat.getCategoryType();

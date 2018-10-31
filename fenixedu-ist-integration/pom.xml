@@ -172,6 +172,11 @@
             <artifactId>renates-integration</artifactId>
             <version>${version.pt.ist.renates-integration}</version>
         </dependency>
+        <dependency>
+            <groupId>org.fenixedu</groupId>
+            <artifactId>fenixedu-api</artifactId>
+            <version>1.0-SNAPSHOT</version>
+        </dependency>
     </dependencies>
 
     <repositories>
