@@ -24,6 +24,9 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import org.fenixedu.academic.api.FenixAPIv1;
+import org.fenixedu.academic.api.beans.FenixPerson;
+import org.fenixedu.academic.api.dto.PersonInformationBean;
 import org.fenixedu.academic.domain.*;
 import org.fenixedu.academic.domain.accessControl.ActiveStudentsGroup;
 import org.fenixedu.academic.domain.accessControl.ActiveTeachersGroup;
@@ -32,16 +35,12 @@ import org.fenixedu.academic.domain.degreeStructure.CourseGroup;
 import org.fenixedu.academic.domain.organizationalStructure.Unit;
 import org.fenixedu.academic.domain.student.Registration;
 import org.fenixedu.academic.domain.time.calendarStructure.AcademicInterval;
-import org.fenixedu.api.FenixAPIv1;
-import org.fenixedu.api.FenixAPIv1Impl;
-import org.fenixedu.api.beans.FenixPerson;
 import org.fenixedu.bennu.core.domain.Avatar;
 import org.fenixedu.bennu.core.domain.Bennu;
 import org.fenixedu.bennu.core.domain.User;
 import org.fenixedu.bennu.core.i18n.BundleUtil;
 import org.fenixedu.bennu.core.security.Authenticate;
 import org.fenixedu.bennu.oauth.annotation.OAuthEndpoint;
-import org.fenixedu.dto.PersonInformationBean;
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.joda.time.YearMonthDay;
@@ -68,8 +67,8 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-@Path("/fenix/v1")
-public class ISTFenixAPIv1 extends FenixAPIv1Impl {
+//@Path("/fenix/v1")
+public class ISTFenixAPIv1 extends FenixAPIv1 {
 
     public final static String PERSONAL_SCOPE = "INFO";
     public final static String DEGREE_CURRICULAR_MANAGEMENT = "DEGREE_CURRICULAR_MANAGEMENT";
@@ -104,7 +103,23 @@ public class ISTFenixAPIv1 extends FenixAPIv1Impl {
     protected Set<FenixPerson.FenixRole> getPersonRoles(Person person, PersonInformationBean pib) {
         User user = person.getUser();
 
-        final Set<FenixPerson.FenixRole> roles = super.getPersonRoles(person, pib);
+        final Set<FenixPerson.FenixRole> roles = new HashSet<>();
+
+        if (new ActiveTeachersGroup().isMember(user)) {
+            roles.add(new FenixPerson.TeacherFenixRole(pib.getTeacherDepartment()));
+        }
+
+        if (new ActiveStudentsGroup().isMember(user)) {
+            roles.add(new FenixPerson.StudentFenixRole(pib.getStudentRegistrations()));
+        }
+
+        if (new AllAlumniGroup().isMember(user)) {
+            ArrayList<Registration> concludedRegistrations = new ArrayList<>();
+            if (person.getStudent() != null) {
+                concludedRegistrations.addAll(person.getStudent().getConcludedRegistrations());
+            }
+            roles.add(new FenixPerson.AlumniFenixRole(concludedRegistrations));
+        }
 
         if (new ActiveEmployees().isMember(user)) {
             roles.add(new FenixPerson.EmployeeFenixRole());
