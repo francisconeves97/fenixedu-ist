@@ -67,7 +67,7 @@ import java.util.*;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-//@Path("/fenix/v1")
+@Path("/fenix/v1")
 public class ISTFenixAPIv1 extends FenixAPIv1 {
 
     public final static String PERSONAL_SCOPE = "INFO";
@@ -126,6 +126,30 @@ public class ISTFenixAPIv1 extends FenixAPIv1 {
         }
 
         return roles;
+    }
+
+    /**
+     * Returns announcements for course by id
+     *
+
+     * @param oid
+     *            course id
+     * @return
+     */
+    @GET
+    @Produces(JSON_UTF8)
+    @Path("courses/{id}/announcements")
+    public List<FenixCourseAnnouncement> courseAnnouncementsByOid(@PathParam("id") String oid) {
+        final ExecutionCourse executionCourse = getDomainObject(oid, ExecutionCourse.class);
+
+        List<FenixCourseAnnouncement> announcements = executionCourse.getSite().getCategoriesSet().stream()
+                .filter(category -> category.getSlug().equals("announcement"))
+                .flatMap(category -> category.getPostsSet().stream())
+                .filter(post -> post.isVisible() && post.getCanViewGroup().isMember(null))
+                .map(FenixCourseAnnouncement::new)
+                .collect(Collectors.toList());
+
+        return announcements;
     }
 
     @GET
