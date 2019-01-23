@@ -1,12 +1,11 @@
 package pt.ist.fenixedu.giaf.invoices;
 
-import java.time.Year;
-
 import org.fenixedu.academic.domain.ExecutionYear;
-import org.fenixedu.academic.domain.accounting.CreditNoteState;
 import org.fenixedu.academic.domain.accounting.Event;
 import org.fenixedu.academic.util.Money;
 import org.joda.time.DateTime;
+
+import java.time.Year;
 
 public class EventWrapper {
 
@@ -23,7 +22,8 @@ public class EventWrapper {
 
     public static boolean needsToProcessPayments(Event event) {
         final int currentYear = Year.now().getValue();
-        return event.getAccountingTransactionsSet().stream().anyMatch(tx -> tx.getWhenRegistered().getYear() == currentYear);
+        return event.getAccountingTransactionsSet().stream().anyMatch(tx -> tx.getWhenRegistered().getYear() == currentYear
+                || tx.getWhenRegistered().getYear() == currentYear -1);
     }
 
     public static boolean shouldProcess(final ErrorLogConsumer consumer, final Event event) {
@@ -34,7 +34,6 @@ public class EventWrapper {
 
     public final Event event;
     public final Money debt;
-    public final Money reimbursements;
 
     public EventWrapper(final Event event, final pt.ist.fenixedu.giaf.invoices.ErrorLogConsumer errorLogConsumer, boolean sap) {
         this.event = event;
@@ -46,19 +45,6 @@ public class EventWrapper {
         final Money value = event.getOriginalAmountToPay();
         final Money diff = value.subtract(payedBeforThreshold);
         debt = diff.isPositive() ? diff : Money.ZERO;
-
-        // calculate reimbursements
-        {
-            reimbursements = event.getAccountingTransactionsSet().stream().flatMap(at -> at.getEntriesSet().stream())
-                    .flatMap(e -> e.getReceiptsSet().stream()).flatMap(r -> r.getCreditNotesSet().stream())
-                    .filter(cn -> CreditNoteState.PAYED.equals(cn.getState())) //TODO rever este filtro
-                    .flatMap(c -> c.getCreditNoteEntriesSet().stream()).map(cne -> cne.getAmount())
-                    .reduce(Money.ZERO, Money::add);
-
-//            reimbursements = event.getAccountingTransactionsSet().stream().map(at -> at.getToAccountEntry())
-//                    .map(e -> e.getAdjustmentCreditNoteEntry()).filter(Objects::nonNull).map(cne -> cne.getAmount())
-//                    .reduce(Money.ZERO, Money::add);
-        }
     }
 
     private Money calculateAmountPayed(final DateTime threshold,

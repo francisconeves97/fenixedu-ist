@@ -21,6 +21,9 @@ package pt.ist.fenixedu.giaf.invoices.ui;
 
 import java.util.Collections;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collector.Characteristics;
 
@@ -29,8 +32,16 @@ import org.fenixedu.academic.domain.accessControl.AcademicAuthorizationGroup;
 import org.fenixedu.academic.domain.accessControl.academicAdministration.AcademicOperationType;
 import org.fenixedu.academic.domain.accounting.Event;
 import org.fenixedu.academic.domain.accounting.EventState;
+import org.fenixedu.academic.domain.accounting.Refund;
 import org.fenixedu.academic.domain.accounting.calculator.DebtInterestCalculator;
+import org.fenixedu.academic.dto.accounting.DepositAmountBean;
+import org.fenixedu.academic.domain.accounting.events.EventExemptionJustificationType;
+import org.fenixedu.academic.domain.exceptions.DomainException;
+import org.fenixedu.academic.ui.spring.controller.AccountingEventsPaymentManagerController;
+import org.fenixedu.academic.ui.spring.service.AccountingManagementAccessControlService;
+import org.fenixedu.academic.ui.spring.service.AccountingManagementService;
 import org.fenixedu.academic.util.Money;
+import org.fenixedu.bennu.core.domain.Bennu;
 import org.fenixedu.bennu.core.domain.User;
 import org.fenixedu.bennu.core.groups.Group;
 import org.fenixedu.bennu.core.security.Authenticate;
@@ -49,12 +60,14 @@ import com.google.gson.JsonObject;
 
 import pt.ist.fenixedu.domain.ExternalClient;
 import pt.ist.fenixedu.domain.SapRequest;
+import pt.ist.fenixedu.domain.SapRequestType;
 import pt.ist.fenixedu.giaf.invoices.ErrorLogConsumer;
 import pt.ist.fenixedu.giaf.invoices.EventLogger;
 import pt.ist.fenixedu.giaf.invoices.EventProcessor;
 import pt.ist.fenixedu.giaf.invoices.SapEvent;
+import pt.ist.fenixframework.Atomic;
 
-@SpringFunctionality(app = InvoiceDownlaodController.class, title = "title.sap.invoice.viewer")
+@SpringFunctionality(app = InvoiceDownloadController.class, title = "title.sap.invoice.viewer")
 @RequestMapping("/sap-invoice-viewer")
 public class SapInvoiceController {
 
@@ -70,15 +83,31 @@ public class SapInvoiceController {
                 .orElse(false);
     }
 
+    public static boolean isSapIntegrationManager() {
+        return Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser());
+    }
+
     private String homeRedirect(final String username) {
         return "redirect:/sap-invoice-viewer?username=" + username;
+    }
+
+    private String eventRedirect(final Event event) {
+        return "redirect:" + eventDetails(event);
+    }
+
+    private String eventDetails(final Event event) {
+        return AccountingEventsPaymentManagerController.REQUEST_MAPPING + "/" + event.getExternalId() + "/details";
+    }
+    
+    private String sapDocumentsRedirect(final Event event) {
+        return "redirect:/sap-invoice-viewer/" + event.getExternalId();
     }
 
     @RequestMapping(method = RequestMethod.GET)
     public String home(@RequestParam(required = false) String username, final Model model,
             @RequestParam(required = false) String exception, @RequestParam(required = false) String errors) {
-        final User user = InvoiceDownlaodController.getUser(username);
-        if (InvoiceDownlaodController.isAllowedToAccess(user)) {
+        final User user = InvoiceDownloadController.getUser(username);
+        if (InvoiceDownloadController.isAllowedToAccess(user)) {
             final Person person = user.getPerson();
             final DateTime now = new DateTime();
             final JsonArray events = person.getEventsSet().stream()
@@ -96,6 +125,25 @@ public class SapInvoiceController {
         return "sap-invoice-viewer/home";
     }
 
+    @RequestMapping(value = "/{event}", method = RequestMethod.GET)
+    public String eventDetails(final @PathVariable Event event, final Model model,
+            @RequestParam(required = false) String exception, @RequestParam(required = false) String errors) {
+        model.addAttribute("eventDetailsUrl", eventDetails(event));
+        model.addAttribute("event", event);
+        final Set<SapRequest> sapRequests = new TreeSet<>(SapRequest.COMPARATOR_BY_EVENT_AND_ORDER);
+        sapRequests.addAll(event.getSapRequestSet());
+        model.addAttribute("sapRequests", sapRequests);
+        if (!Strings.isNullOrEmpty(exception)) {
+            model.addAttribute("exception", exception);
+        }
+        if (!Strings.isNullOrEmpty(errors)) {
+            model.addAttribute("errors", errors);
+        }
+        model.addAttribute("isSapIntegrator", Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser()));
+        model.addAttribute("isPaymentManager", SapInvoiceController.isAdvancedPaymentManager());
+        return "sap-invoice-viewer/eventDetails";
+    }
+
     @RequestMapping(value = "/{event}/calculateRequests", method = RequestMethod.POST)
     public String calculateRequests(final @PathVariable Event event, final Model model) {
         return processEvent(model, event, (c, l, e) -> EventProcessor.registerEventSapRequests(c, l, e));
@@ -104,6 +152,44 @@ public class SapInvoiceController {
     @RequestMapping(value = "/{event}/sync", method = RequestMethod.POST)
     public String syncEvent(final @PathVariable Event event, final Model model) {
         return processEvent(model, event, (c, l, e) -> EventProcessor.syncEventWithSap(c, l, e));
+    }
+
+    @RequestMapping(value = "{event}/refundEvent", method = RequestMethod.POST)
+    public String refundEvent(final @PathVariable Event event, final User user, final Model model, @RequestParam(required = false) final ExternalClient client,
+            final @RequestParam EventExemptionJustificationType justificationType, final @RequestParam String reason) {
+        return doRefund(event, user, model, () -> doRefundToExternalClient(event, user, client, justificationType, reason));
+    }
+
+    @Atomic
+    private Refund doRefundToExternalClient(final Event event, final User user, final ExternalClient client,
+            final EventExemptionJustificationType justificationType, final String reason) {
+        final Refund refund = new AccountingManagementService().refundEvent(event, user, justificationType, reason);
+        refund.setExternalClient(client);
+        return refund;
+    }
+
+    @RequestMapping(value = "{event}/refundExcessPayment", method = RequestMethod.POST)
+    public String refundExcessPayment(final @PathVariable Event event, final User user, final Model model, @RequestParam(required = false) final ExternalClient client){
+        return doRefund(event, user, model, () -> doRefundExcessToExternalClient(event, user, client));
+    }
+
+    @Atomic
+    private Refund doRefundExcessToExternalClient(final Event event, final User user, final ExternalClient client) {
+        final Refund refund = new AccountingManagementService().refundExcessPayment(event, user, null);
+        refund.setExternalClient(client);
+        return refund;
+    }
+
+    private String doRefund(final @PathVariable Event event, final User user, final Model model, Supplier<?> supplier) {
+        new AccountingManagementAccessControlService().checkAdvancedPaymentManager(event, user);
+        try {
+            supplier.get();
+        } catch (final DomainException e) {
+            model.addAttribute("error", e.getLocalizedMessage());
+            model.addAttribute("eventDetailsUrl", eventDetails(event));
+            return "redirect:/accounting-management/" + event.getExternalId() + "/refund";
+        }
+        return eventRedirect(event);        
     }
 
     private String processEvent(final Model model, final Event event, final EventProcessorInterface processor) {
@@ -129,28 +215,30 @@ public class SapInvoiceController {
             }
             errors.append(String.format(msg.replace("%n", ""), args));
         };
-        if (Group.dynamic("managers").isMember(Authenticate.getUser())) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser())
+                || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
             processor.process(errorLogConsumer, elogger, event);
         }
 
         model.addAttribute("errors", errors.toString());
 
-        return homeRedirect(event.getPerson().getUsername());
+        return sapDocumentsRedirect(event);
     }
 
     @RequestMapping(value = "/{sapRequest}/transfer", method = RequestMethod.GET)
     public String prepareTransfer(final @PathVariable SapRequest sapRequest, final Model model) {
-        model.addAttribute("sapRequest", toJsonObject(sapRequest));
-        final DateTime now = new DateTime();
-        model.addAttribute("event", toJsonObject(sapRequest.getEvent(), now));
-        return "sap-invoice-viewer/transferInvoice";
+        model.addAttribute("sapRequest", sapRequest);
+        model.addAttribute("clientData", sapRequest.getClientData());
+        model.addAttribute("documentData", sapRequest.getDocumentData());
+        model.addAttribute("isPaymentManager", SapInvoiceController.isAdvancedPaymentManager());
+        return "sap-invoice-viewer/invoiceDetails";
     }
 
     @RequestMapping(value = "/{sapRequest}/transfer", method = RequestMethod.POST)
     public String transfer(final @PathVariable SapRequest sapRequest, final Model model,
             @RequestParam final ExternalClient client, @RequestParam final String valueToTransfer,
             @RequestParam final String pledgeNumber) {
-        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || isAdvancedPaymentManager()) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || isAdvancedPaymentManager() || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
             try {
                 final Money value = toMoney(valueToTransfer);
                 if (value.isZero() || value.isNegative()) {
@@ -177,7 +265,7 @@ public class SapInvoiceController {
                 return prepareTransfer(sapRequest, model);                
             }
         }
-        return homeRedirect(sapRequest.getEvent().getPerson().getUsername());
+        return eventRedirect(sapRequest.getEvent());
     }
 
     static Money toMoney(final String s) {
@@ -191,16 +279,34 @@ public class SapInvoiceController {
     @RequestMapping(value = "/{sapRequest}/delete", method = RequestMethod.POST)
     public String delete(final @PathVariable SapRequest sapRequest, final Model model) {
         final Event event = sapRequest.getEvent();
-        if (Group.dynamic("managers").isMember(Authenticate.getUser())) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
             sapRequest.delete();
         }
-        return homeRedirect(event.getPerson().getUsername());
+        return sapDocumentsRedirect(event);
+    }
+
+    @RequestMapping(value = "/{sapRequest}/close", method = RequestMethod.POST)
+    public String close(final @PathVariable SapRequest sapRequest, final Model model) {
+        final Event event = sapRequest.getEvent();
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
+            final SapEvent sapEvent = new SapEvent(event);
+            try {
+                if (sapRequest.getRequestType() == SapRequestType.CREDIT) {
+                    sapEvent.cancelCredit(sapRequest);
+                } else {
+                    sapEvent.closeDocument(sapRequest);
+                }
+            } catch (final Exception | Error e) {
+                model.addAttribute("exception", e.getMessage());
+            }
+        }
+        return sapDocumentsRedirect(event);
     }
 
     @RequestMapping(value = "/{sapRequest}/cancel", method = RequestMethod.POST)
     public String cancel(final @PathVariable SapRequest sapRequest, final Model model) {
         final Event event = sapRequest.getEvent();
-        if (Group.dynamic("managers").isMember(Authenticate.getUser())) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
             final SapEvent sapEvent = new SapEvent(event);
             try {
                 sapEvent.cancelDocument(sapRequest);
@@ -208,12 +314,12 @@ public class SapInvoiceController {
                 model.addAttribute("exception", e.getMessage());
             }
         }
-        return homeRedirect(event.getPerson().getUsername());
+        return sapDocumentsRedirect(event);
     }
 
     @RequestMapping(value = "/{event}/cancelDebt", method = RequestMethod.POST)
     public String cancelDebt(final @PathVariable Event event, final Model model) {
-        if (Group.dynamic("managers").isMember(Authenticate.getUser())) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
             final SapEvent sapEvent = new SapEvent(event);
             try {
                 sapEvent.cancelDebt();
@@ -221,7 +327,97 @@ public class SapInvoiceController {
                 model.addAttribute("exception", e.getMessage());
             }
         }
-        return homeRedirect(event.getPerson().getUsername());
+        return sapDocumentsRedirect(event);
+    }
+
+    @RequestMapping(value = "/{event}/createNewInvoice", method = RequestMethod.GET)
+    public String prepareCreateNewInvoice(final @PathVariable Event event, final Model model) {
+        model.addAttribute("event", event);
+        model.addAttribute("eventDetailsUrl", eventDetails(event));
+        return "sap-invoice-viewer/createNewInvoice";
+    }
+
+    @RequestMapping(value = "/{event}/createNewInvoice", method = RequestMethod.POST)
+    public String createNewInvoice(final @PathVariable Event event, final Model model,
+            @RequestParam final ExternalClient client, @RequestParam final String valueToTransfer,
+            @RequestParam final String pledgeNumber) {
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
+            try {
+                final Money value = toMoney(valueToTransfer);
+                if (value.isZero() || value.isNegative()) {
+                    model.addAttribute("error", "error.value.to.transfer.must.be.positive");
+                    return prepareCreateNewInvoice(event, model);
+                }
+                final SapEvent sapEvent = new SapEvent(event);
+                try {
+                    sapEvent.registerInvoice(value, event.isGratuity(), true, client, pledgeNumber);
+                } catch (final Exception | Error e) {
+                    model.addAttribute("exception", e.getMessage());
+                    return prepareCreateNewInvoice(event, model);
+                }
+            } catch (final NumberFormatException ex) {
+                model.addAttribute("error", "error.value.to.transfer.must.be.positive");
+                return prepareCreateNewInvoice(event, model);
+            }
+        }
+        return sapDocumentsRedirect(event);
+    }
+
+    @RequestMapping(value = "/{event}/registerInternalPayment", method = RequestMethod.GET)
+    public String prepareRegisterInternalPayment(final @PathVariable Event event, final Model model) {
+        model.addAttribute("event", event);
+        model.addAttribute("eventDetailsUrl", eventDetails(event));
+        return "sap-invoice-viewer/registerInternalPayment";
+    }
+
+    @RequestMapping(value = "/{event}/registerInternalPayment", method = RequestMethod.POST)
+    public String registerInternalPayment(final @PathVariable Event event, final Model model,
+            @RequestParam final String unit, @RequestParam final String valueToTransfer,
+            @RequestParam final DateTime whenRegistered, @RequestParam final String reason) {
+        final User user = Authenticate.getUser();
+        if (Group.dynamic("managers").isMember(user) || Group.dynamic("sapIntegrationManager").isMember(user)) {
+            try {
+                final Money value = toMoney(valueToTransfer);
+                if (value.isZero() || value.isNegative()) {
+                    model.addAttribute("error", "error.value.to.transfer.must.be.positive");
+                    return prepareRegisterInternalPayment(event, model);
+                }
+                final DebtInterestCalculator calculatorNow = event.getDebtInterestCalculator(new DateTime());
+                final Money dueAmount = new Money(calculatorNow.getDueAmount());
+                if (value.greaterThan(dueAmount)) {
+                    model.addAttribute("error", "error.value.exeeds.due.amount");
+                    return prepareRegisterInternalPayment(event, model);                    
+                }
+                final DebtInterestCalculator calculatorWhen = event.getDebtInterestCalculator(whenRegistered);
+                final Money dueInterestOrFine = new Money(calculatorWhen.getDueFineAmount().add(calculatorWhen.getDueInterestAmount()));
+                if (dueInterestOrFine.isPositive()) {
+                    model.addAttribute("error", "error.cannot.register.internal.payment.with.pending.interes.or.fines");
+                    return prepareRegisterInternalPayment(event, model);                    
+                }
+
+                final DepositAmountBean bean = new DepositAmountBean();
+                bean.setAmount(value);
+                bean.setEntryType(event.getEntryType());
+                bean.setPaymentMethod(Bennu.getInstance().getInternalPaymentMethod());
+                bean.setPaymentReference(unit);
+                bean.setReason(reason);
+                bean.setWhenRegistered(whenRegistered);
+                new AccountingManagementService().depositAmount(event, user, bean);
+            } catch (final NumberFormatException ex) {
+                model.addAttribute("error", "error.value.to.transfer.must.be.positive");
+                return prepareRegisterInternalPayment(event, model);
+            }
+        }
+        return eventRedirect(event);
+    }    
+
+    @RequestMapping(value = "/{sapRequest}/toggleIgnore", method = RequestMethod.POST)
+    public String toggleIgnore(final @PathVariable SapRequest sapRequest, final Model model) {
+        final Event event = sapRequest.getEvent();
+        if (Group.dynamic("managers").isMember(Authenticate.getUser()) || Group.dynamic("sapIntegrationManager").isMember(Authenticate.getUser())) {
+            sapRequest.toggleIgnore();
+        }
+        return sapDocumentsRedirect(event);
     }
 
     private JsonObject toJsonObject(final Event event, final DateTime when) {
@@ -296,6 +492,8 @@ public class SapInvoiceController {
         result.addProperty("whenSent", sapRequest.getWhenSent() == null ? null : sapRequest.getWhenSent().toString(DATE_TIME_FORMAT));
         result.addProperty("ignore", sapRequest.getIgnore());
         result.addProperty("referenced", sapRequest.getReferenced());
+        result.addProperty("isAvailableForTransfer", sapRequest.isAvailableForTransfer());
+        result.addProperty("valuevalueAvailableForTransfer", sapRequest.getValue() == null ? null : sapRequest.getValue().subtract(sapRequest.consumedAmount()).toPlainString());
         return result;
     }
 

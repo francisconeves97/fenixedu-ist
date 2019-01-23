@@ -25,6 +25,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.Collection;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.HashSet;
 import java.util.Set;
@@ -38,32 +39,23 @@ import org.fenixedu.academic.domain.accounting.AccountingTransaction;
 import org.fenixedu.academic.domain.accounting.AccountingTransactionDetail;
 import org.fenixedu.academic.domain.accounting.Event;
 import org.fenixedu.academic.domain.accounting.ResidenceEvent;
-import org.fenixedu.academic.domain.accounting.accountingTransactions.detail.SibsTransactionDetail;
-import org.fenixedu.academic.domain.accounting.events.AdministrativeOfficeFeeAndInsuranceEvent;
+import org.fenixedu.academic.domain.accounting.calculator.Debt;
+import org.fenixedu.academic.domain.accounting.calculator.DebtInterestCalculator;
 import org.fenixedu.academic.domain.accounting.events.AnnualEvent;
-import org.fenixedu.academic.domain.accounting.events.ImprovementOfApprovedEnrolmentEvent;
-import org.fenixedu.academic.domain.accounting.events.PastAdministrativeOfficeFeeAndInsuranceEvent;
-import org.fenixedu.academic.domain.accounting.events.SpecialSeasonEnrolmentEvent;
 import org.fenixedu.academic.domain.accounting.events.candidacy.IndividualCandidacyEvent;
-import org.fenixedu.academic.domain.accounting.events.dfa.DFACandidacyEvent;
 import org.fenixedu.academic.domain.accounting.events.gratuity.ExternalScholarshipGratuityContributionEvent;
 import org.fenixedu.academic.domain.accounting.events.gratuity.GratuityEvent;
-import org.fenixedu.academic.domain.accounting.events.gratuity.GratuityEventWithPaymentPlan;
-import org.fenixedu.academic.domain.accounting.events.insurance.InsuranceEvent;
 import org.fenixedu.academic.domain.contacts.PhysicalAddress;
 import org.fenixedu.academic.domain.degreeStructure.CycleType;
 import org.fenixedu.academic.domain.exceptions.DomainException;
 import org.fenixedu.academic.domain.organizationalStructure.Party;
 import org.fenixedu.academic.domain.phd.debts.PhdEvent;
-import org.fenixedu.academic.domain.phd.debts.PhdGratuityEvent;
 import org.fenixedu.academic.domain.student.Registration;
 import org.fenixedu.academic.domain.student.Student;
 import org.fenixedu.academic.util.Money;
-import org.fenixedu.bennu.core.domain.User;
-import org.fenixedu.bennu.core.domain.UserProfile;
 import org.fenixedu.commons.StringNormalizer;
 import org.joda.time.DateTime;
-import org.joda.time.YearMonthDay;
+import org.joda.time.LocalDate;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -84,7 +76,8 @@ public class Utils {
         try {
             transaction.getAmountWithAdjustment().getAmount();
         } catch (final DomainException ex) {
-            logError(consumer, "Unable to Determine Amount", event, null, "", null, null, null, null, event);
+            logError(consumer, "Unable to Determine Amount", event, getUserIdentifier(event.getParty()), "", null,
+                    event.getParty(), null, null, event);
             return false;
         }
 
@@ -126,28 +119,32 @@ public class Utils {
                 return false;
             }
         }
+        final Party party = event.getParty();
         final String eventDescription;
         try {
             eventDescription = event.getDescription().toString();
         } catch (final NullPointerException ex) {
-            logError(consumer, "No Description Available", event, null, "", null, null, null, null, event);
+            logError(consumer, "No Description Available", event, getUserIdentifier(party), "", null, party, null, null, event);
             return false;
         }
         final Money originalAmountToPay;
         try {
             originalAmountToPay = event.getOriginalAmountToPay();
         } catch (final DomainException ex) {
-            logError(consumer, "Unable to Determine Amount: " + ex.getMessage(), event, null, "", null, null, null, null, event);
+            logError(consumer, "Unable to Determine Amount: " + ex.getMessage(), event, getUserIdentifier(party), "", null, party, null, null, event);
             return false;
         } catch (final NullPointerException ex) {
-            logError(consumer, "Unable to Determine Amount: " + ex.getMessage(), event, null, "", null, null, null, null, event);
+            logError(consumer, "Unable to Determine Amount: " + ex.getMessage(), event, getUserIdentifier(party), "", null, party, null, null, event);
             return false;
         }
 
-        final Party party = event.getParty();
         final Country country = party.getCountry();
+        if (country == null) {
+            logError(consumer, "Has no country", event, getUserIdentifier(party), "", null, party, null, null, event);
+            return false;
+        }
 
-        final SimpleImmutableEntry<String, String> articleCode = SapEvent.mapToProduct(event, eventDescription, false, false);
+        final SimpleImmutableEntry<String, String> articleCode = SapEvent.mapToProduct(event, eventDescription, false, false, false, false);
         if (articleCode == null) {
             if (eventDescription.indexOf("Pagamento da resid") >= 0) {
                 logError(consumer, "No Article Code - Residence", event, null, "", null, null, null, null, event);
@@ -264,15 +261,13 @@ public class Utils {
             return;
         }
 
-        BigDecimal amount;
-        DebtCycleType cycleType;
+        BigDecimal amount = null;
+        DebtCycleType cycleType = null;
         
         try {
-            amount = e.getOriginalAmountToPay().getAmount();
             cycleType = cycleType(e);
+            amount = e.getOriginalAmountToPay().getAmount();
         } catch (Throwable t) {
-            amount = null;
-            cycleType = null;
         }
 
         consumer.accept(
@@ -308,8 +303,8 @@ public class Utils {
     private static boolean isValidPostCode(final String postalCode) {
         if (postalCode != null) {
             final String v = postalCode.trim();
-            return v.length() == 8 && v.charAt(4) == '-' && CharMatcher.DIGIT.matchesAllOf(v.substring(0, 4))
-                    && CharMatcher.DIGIT.matchesAllOf(v.substring(5));
+            return v.length() == 8 && v.charAt(4) == '-' && CharMatcher.digit().matchesAllOf(v.substring(0, 4))
+                    && CharMatcher.digit().matchesAllOf(v.substring(5));
         }
         return false;
     }
@@ -413,33 +408,28 @@ public class Utils {
         }
     }
 
-    public static Date getDueDate(final Event event) {
-        final DateTime dueDate;
-        if (event instanceof GratuityEventWithPaymentPlan) {
-            final GratuityEventWithPaymentPlan gratuityEventWithPaymentPlan = (GratuityEventWithPaymentPlan) event;
-            dueDate = findLastDueDate(gratuityEventWithPaymentPlan);
-        } else if (event instanceof PhdGratuityEvent) {
-            final PhdGratuityEvent phdGratuityEvent = (PhdGratuityEvent) event;
-            dueDate = phdGratuityEvent.getLimitDateToPay();
-        } else if (event instanceof PastAdministrativeOfficeFeeAndInsuranceEvent) {
-            dueDate = getDueDateByPaymentCodes(event);
-        } else if (event instanceof AdministrativeOfficeFeeAndInsuranceEvent) {
-            final AdministrativeOfficeFeeAndInsuranceEvent insuranceEvent = (AdministrativeOfficeFeeAndInsuranceEvent) event;
-            final YearMonthDay ymd = insuranceEvent.getAdministrativeOfficeFeePaymentLimitDate();
-            dueDate = ymd != null ? ymd.plusDays(1).toDateTimeAtMidnight() : getDueDateByPaymentCodes(event);
-        } else {
-            dueDate = getDueDateByPaymentCodes(event);
+    public static boolean isOverDue(final Event event) {
+        if (event.isCancelled()) {
+            return false;
         }
-        return dueDate.toDate();
+        final LocalDate today = new LocalDate();
+        final DebtInterestCalculator calculator = event.getDebtInterestCalculator(new DateTime());
+        for (final Debt debt : calculator.getDebtsOrderedByDueDate()) {
+            if ((debt.getDueDate().isBefore(today) && debt.getOpenAmount().signum() > 0)
+                    || debt.getOpenFineAmount().signum() > 0
+                    || debt.getOpenInterestAmount().signum() > 0){
+                return true;
+            }
+        }
+        return false;
     }
 
-    private static DateTime getDueDateByPaymentCodes(final Event event) {
-        final YearMonthDay ymd = event.getPaymentCodesSet().stream().map(pc -> pc.getEndDate()).max(YearMonthDay::compareTo).orElse(null);
-        return ymd != null ? ymd.plusDays(1).toDateTimeAtMidnight() : event.getWhenOccured();
+    public static Date getDueDate(final Event event) {
+        return event.getDueDateAmountMap().keySet()
+                .stream()
+                .max(Comparator.naturalOrder())
+                .map(LocalDate::toDate)
+                .orElseThrow(() -> new DomainException("key.return.argument",
+                        "No due date found for event " + event.getExternalId()));
     }
-
-    private static DateTime findLastDueDate(final GratuityEventWithPaymentPlan event) {
-        return event.getInstallments().stream().map(i -> i.getEndDate().toDateTimeAtMidnight()).max(DateTime::compareTo).orElse(null);
-    }
-
 }

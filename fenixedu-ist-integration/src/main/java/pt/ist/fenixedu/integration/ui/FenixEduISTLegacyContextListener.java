@@ -226,28 +226,29 @@ public class FenixEduISTLegacyContextListener implements ServletContextListener 
                 }
 
                 if (tinCountryCode != null) {
+                    final Country countryForTin = Country.readByTwoLetterCode(tinCountryCode);
                     final PhysicalAddress addressForTin = Utils.toAddress(person, tinCountryCode);
                     if (addressForTin == null) {
                         warnings.add(BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.person.details.no.address.for.tin"));
                     } else if (addressForTin.getCountryOfResidence() == null) {
                         warnings.add(BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.person.details.address.for.tin.has.no.country"));
-                    } else if (addressForTin.getAreaCode() == null || countryOfAddress == null || !PostalCodeValidator.isValidAreaCode(tinCountryCode, addressForTin.getAreaCode())) {
+                    } else if (addressForTin.getAreaCode() == null || countryOfAddress == null || countryForTin == null || !PostalCodeValidator.isValidAreaCode(tinCountryCode, addressForTin.getAreaCode())) {
                         warnings.add(BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.person.details.no.valid.post.code.for.tin"));
                     }
                 }
 
                 try {
                     final Stream<Event> events = person.getEventsSet().stream();
-                    final String overDueEvents = events.filter(FenixEduISTLegacyContextListener::isOverDue)
+                    final String overDueEvents = events.filter(Utils::isOverDue)
                             .map(e -> e.getDescription().toString())
                             .collect(Collectors.joining(","));
                     if (!Strings.isNullOrEmpty(overDueEvents)) {
                         warnings.add(BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.event.overdue", overDueEvents));
                     }
-                } catch (final NullPointerException npe) {
+                } catch (final Throwable thrw) {
                     final ByteArrayOutputStream stream = new ByteArrayOutputStream();
                     final PrintStream printStream = new PrintStream(stream);
-                    npe.printStackTrace(printStream);
+                    thrw.printStackTrace(printStream);
                     warnings.add(BundleUtil.getString("resources.FenixeduIstIntegrationResources", "label.event.not.consistent", new String(stream.toByteArray())));
                 }
 
@@ -297,15 +298,11 @@ public class FenixEduISTLegacyContextListener implements ServletContextListener 
 
     }
 
-    private static boolean isOverDue(final Event event) {
-        return !event.isCancelled() && event.isInDebt() && Utils.getDueDate(event).before(new Date());
-    }
-
     private static boolean isValidPostCode(final String postalCode) {
         if (postalCode != null) {
             final String v = postalCode.trim();
-            return v.length() == 8 && v.charAt(4) == '-' && CharMatcher.DIGIT.matchesAllOf(v.substring(0, 4))
-                    && CharMatcher.DIGIT.matchesAllOf(v.substring(5));
+            return v.length() == 8 && v.charAt(4) == '-' && CharMatcher.digit().matchesAllOf(v.substring(0, 4))
+                    && CharMatcher.digit().matchesAllOf(v.substring(5));
         }
         return false;
     }

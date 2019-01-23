@@ -1,40 +1,18 @@
 <%@ taglib prefix="spring" uri="http://www.springframework.org/tags" %>
+<%@ taglib prefix="c" uri="http://java.sun.com/jsp/jstl/core" %>
 <% final String contextPath = request.getContextPath(); %>
-
 <link rel="stylesheet" href="//code.jquery.com/ui/1.11.4/themes/smoothness/jquery-ui.css">
 <script src="${pageContext.request.contextPath}/javaScript/jquery/jquery-ui.js"></script>
 
-<div class="page-header">
-    <h1>
-        <spring:message code="title.sap.invoice.transfer" text="Transfer Invoice"/>
-    </h1>
-</div>
+    <div id="errors" style="display: none; margin-bottom: 25px;" class="alert-warning"></div>
 
-<div id="errors" style="display: none; margin-bottom: 25px;" class="alert-warning"></div>
+<h3>
+    <spring:message code="title.sap.invoice.transfer" text="Transfer Invoice"/>
+    <small><spring:message code="label.sapRequest.valueAvailableForTransfer" text="Value Available For Transfer" />: ${sapRequest.valueAvailableForTransfer}</small>
+</h3>
 
-<form class="form-horizontal" method="POST">
+<form class="form-horizontal" method="POST" action="<%= contextPath %>/sap-invoice-viewer/${sapRequest.externalId}/transfer">
     ${csrf.field()}
-    <div class="form-group">
-        <label class="control-label col-sm-2" for="type">
-            <spring:message code="label.event.description" text="Event" />
-        </label>
-        <div class="col-sm-10" id="eventDescription">
-        </div>
-    </div>
-    <div class="form-group">
-        <label class="control-label col-sm-2" for="type">
-            <spring:message code="label.sapRequest.documentNumber" text="Document Number" />
-        </label>
-        <div class="col-sm-10" id="documentNumber">
-        </div>
-    </div>
-    <div class="form-group">
-        <label class="control-label col-sm-2" for="type">
-            <spring:message code="label.sapRequest.value" text="Value" />
-        </label>
-        <div class="col-sm-10" id="value">
-        </div>
-    </div>
     <div class="form-group">
         <label class="control-label col-sm-2" for="type">
             <spring:message code="label.invoice.transfer.destination.ssn" text="Destination UVat Number" />
@@ -49,9 +27,10 @@
     <div class="form-group">
         <label class="control-label col-sm-2" for="type">
             <spring:message code="label.invoice.transfer.value" text="Value to Transfer" />
+            <spring:message code="label.euro" text="EUR" />
         </label>
         <div class="col-sm-10">
-            <input name="valueToTransfer" type="text" class="form-control" id="valueToTransfer" required="required" value=""/>
+            <input name="valueToTransfer" type="text" min="0.01" pattern="[0-9]+([\.][0-9]{0,2})?" placeholder="ex: xxxx.yy" required class="form-control" value="${sapRequest.valueAvailableForTransfer}">
         </div>
     </div>
     <div class="form-group">
@@ -70,10 +49,8 @@
         </div>
     </div>
  </form>
- 
- <script type="text/javascript">
-    var event = ${event};
-    var sapRequest = ${sapRequest};
+
+  <script type="text/javascript">
     var contextPath = '<%= contextPath %>';
 
     $(function() {
@@ -106,17 +83,17 @@
     });
 
     $(document).ready(function() {
-    	$('#eventDescription').html(event.eventDescription);
-    	$('#documentNumber').html(sapRequest.documentNumber);
-    	$('#value').html(sapRequest.value);
-
-    	if (${not empty error}) {
-    		document.getElementById("errors").style.display = 'block';
-    		$('#errors').html('<spring:message code="${error}" text="Error"/>');
-    	}
-    	if (${not empty exception}) {
-    		document.getElementById("errors").style.display = 'block';
-    		$('#errors').html('<spring:message code="${exception}" text="Error"/>');
+        if (${not empty error}) {
+            document.getElementById("errors").style.display = 'block';
+            $('#errors').html('<spring:message code="${error}" text="Error"/>');
+        }
+        if (${not empty exception}) {
+            document.getElementById("errors").style.display = 'block';
+            $('#errors').html('<spring:message code="${exception}" text="Error"/>');
+        }
+        if (window.location.href.endsWith("/transfer")) {
+        	document.getElementById('transferInvoiceForm').style.display = 'block';
         }
     });
  </script>
+ 

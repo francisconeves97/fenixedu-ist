@@ -3,12 +3,15 @@ package pt.ist.fenixedu.giaf.invoices;
 import java.math.BigDecimal;
 import java.util.AbstractMap.SimpleImmutableEntry;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.Set;
+import java.util.SortedMap;
+import java.util.TreeMap;
 import java.util.TreeSet;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -21,7 +24,13 @@ import org.fenixedu.academic.domain.accounting.AccountingTransactionDetail;
 import org.fenixedu.academic.domain.accounting.Event;
 import org.fenixedu.academic.domain.accounting.EventType;
 import org.fenixedu.academic.domain.accounting.calculator.CreditEntry;
+import org.fenixedu.academic.domain.accounting.calculator.DebtInterestCalculator;
+import org.fenixedu.academic.domain.accounting.calculator.ExcessRefund;
+import org.fenixedu.academic.domain.accounting.calculator.Fine;
+import org.fenixedu.academic.domain.accounting.calculator.Interest;
+import org.fenixedu.academic.domain.accounting.calculator.PartialPayment;
 import org.fenixedu.academic.domain.accounting.calculator.Payment;
+import org.fenixedu.academic.domain.accounting.calculator.Refund;
 import org.fenixedu.academic.domain.accounting.events.AdministrativeOfficeFeeAndInsuranceEvent;
 import org.fenixedu.academic.domain.accounting.events.AdministrativeOfficeFeeEvent;
 import org.fenixedu.academic.domain.accounting.events.EnrolmentEvaluationEvent;
@@ -35,6 +44,7 @@ import org.fenixedu.academic.domain.organizationalStructure.Party;
 import org.fenixedu.academic.domain.phd.debts.ExternalScholarshipPhdGratuityContribuitionEvent;
 import org.fenixedu.academic.domain.phd.debts.PhdGratuityEvent;
 import org.fenixedu.academic.util.Money;
+import org.fenixedu.bennu.core.domain.Bennu;
 import org.fenixedu.generated.sources.saft.sap.SAFTPTPaymentType;
 import org.fenixedu.generated.sources.saft.sap.SAFTPTSettlementType;
 import org.fenixedu.generated.sources.saft.sap.SAFTPTSourceBilling;
@@ -46,6 +56,7 @@ import com.google.common.base.Strings;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+
 import pt.ist.fenixedu.domain.ExternalClient;
 import pt.ist.fenixedu.domain.SapDocumentFile;
 import pt.ist.fenixedu.domain.SapRequest;
@@ -66,9 +77,6 @@ public class SapEvent {
     private static final int MAX_SIZE_POSTAL_CODE = 20;
     private static final int MAX_SIZE_VAT_NUMBER = 20;
     public LocalDate currentDate = new LocalDate();
-    public static Function<LocalDate, DateTime> documentDatePreviousYear =
-            (currentDate) -> new DateTime(currentDate.getYear() - 1, 12, 31, 23, 59);
-
     public Event event = null;
 
     public SapEvent(final Event event) {
@@ -79,41 +87,38 @@ public class SapEvent {
         return event.getSapRequestSet().stream().filter(r -> !r.getIgnore());
     }
 
-    public SapRequest registerInvoice(Money debtFenix, Event event, boolean isGratuity, boolean isNewDate) throws Exception {
+    public SapRequest registerInvoice(Money debtFenix, Event event, boolean isGratuity, boolean isNewDate) {
 
-        if (isToProcessDebt(event, isGratuity)) {
-            //if debt is greater than invoice, then there was a debt registered and the correspondent invoice failed, don't register the debt again
-            if (!getDebtAmount().greaterThan(getInvoiceAmount())) {
-                registerDebt(debtFenix, event, isNewDate);
-            }
+        if (isToProcessDebt(isGratuity, isNewDate, getDocumentDate(event.getWhenOccured(), isNewDate))) {
+            registerDebt(debtFenix, event, isNewDate);
         }
 
         String clientId = ClientMap.uVATNumberFor(event.getParty());
         JsonObject data = toJsonInvoice(event, debtFenix, getDocumentDate(event.getWhenOccured(), isNewDate), new DateTime(),
-                clientId, false, false);
+                clientId, false, false, false);
 
         String documentNumber = getDocumentNumber(data, false);
         return new SapRequest(event, clientId, debtFenix, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
+    }
 
-//        if (checkAndRegisterIntegration(event, errorLog, elogger, data, documentNumber, sapRequest, result,
-//                SapRequestType.INVOICE.name(), true)) {
-        // if there are amounts in advancement we need to register them in the new invoice
-        //TODO if we do this the value registered in the advancement will be counted 2 times in different categories
-//            Money advancementAmount = getAdvancementAmount();
-//            if (advancementAmount.isPositive()) {
-//                return registerPaymentFromAdvancement(event, clientId, advancementAmount, sapRequest, errorLog, elogger);
-//            } else {
-//                return true;
-//            }
-//            return true;
-//        } else {
-//            return false;
-//        }
+    @Atomic
+    public void registerInvoice(final Money value, final boolean gratuity, final boolean isNewDate, final ExternalClient externalClient, final String pledgeNumber) {
+        final String clientId;
+        final JsonObject data;
+        if (externalClient == null) {
+            clientId = ClientMap.uVATNumberFor(event.getParty());
+            data = toJsonInvoice(event, value, getDocumentDate(event.getWhenOccured(), isNewDate), new DateTime(), clientId, false, false, false);
+        } else {
+            clientId = externalClient.getClientId();
+            data = toJsonInvoice(externalClient, value, getDocumentDate(event.getWhenOccured(), true), new DateTime(), false, false, pledgeNumber);
+        }
+        final String documentNumber = getDocumentNumber(data, false);
+        new SapRequest(event, clientId, value, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
     }
 
     @Atomic
     public void transferInvoice(final SapRequest sapRequest, final ExternalClient externalClient, final Money amountToTransfer,
-            final String pledgeNumber) throws Exception {
+                                final String pledgeNumber) {
         final SapRequestType requestType = sapRequest.getRequestType();
         if (requestType != SapRequestType.INVOICE) {
             throw new Error("label.error.document.is.not.an.invoice");
@@ -121,30 +126,48 @@ public class SapEvent {
         if (amountToTransfer.isZero()) {
             throw new Error("label.error.value.to.transfer.must.be.posituve");
         }
-        event.getSapRequestSet().stream()
-            .filter(r -> r != sapRequest && r.refersToDocument(sapRequest.getDocumentNumber()))
-            .findAny().ifPresent(r -> {
-                throw new Error("label.error.invoice.already.used");
-            });
         final Money invoiceValue = sapRequest.getValue();
-        final Money remainder = invoiceValue.subtract(amountToTransfer);
+        final Money consumedAmount = sapRequest.consumedAmount();
+        final Money availableInvoiceValue = invoiceValue.subtract(consumedAmount);
+        final Money remainder = availableInvoiceValue.subtract(amountToTransfer);
         if (remainder.isNegative()) {
             throw new Error("label.error.amount.exceeds.invoice.value");
         } else {
-            final SapRequest creditRequest = registerCredit(event, EventProcessor.getCreditEntry(invoiceValue), invoiceValue, sapRequest);
-            sapRequest.setIgnore(true);
-            creditRequest.setIgnore(true);
+            registerCredit(event, EventProcessor.getCreditEntry(availableInvoiceValue), availableInvoiceValue, sapRequest);
 
-            final JsonObject data = toJsonInvoice(sapRequest, externalClient, amountToTransfer,
-                    getDocumentDate(event.getWhenOccured(), true), new DateTime(), false, false, pledgeNumber);
+            final JsonObject data = toJsonInvoice(externalClient, amountToTransfer, getDocumentDate(event.getWhenOccured(), true), new DateTime(), false, false, pledgeNumber);
             final String documentNumber = getDocumentNumber(data, false);
             new SapRequest(event, externalClient.getClientId(), amountToTransfer, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
         }
         if (remainder.isPositive()) {
-            final JsonObject data = toJsonInvoice(event, remainder, getDocumentDate(event.getWhenOccured(), true), new DateTime(), sapRequest.getClientId(), false, false);
+            final JsonObject data = toJsonInvoice(event, remainder, getDocumentDate(event.getWhenOccured(), true), new DateTime(), sapRequest.getClientId(), false, false, false);
             final String documentNumber = getDocumentNumber(data, false);
             new SapRequest(event, sapRequest.getClientId(), remainder, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
         }
+    }
+
+    @Atomic
+    public void closeDocument(final SapRequest sapRequest) {
+        final SapRequestType requestType = sapRequest.getRequestType();
+        if (requestType != SapRequestType.INVOICE
+                && requestType != SapRequestType.DEBT
+                && requestType != SapRequestType.INVOICE_INTEREST) {
+            throw new Error("label.document.type.cannot.be.closed");
+        }
+        if (sapRequest.isReferencedByOtherRequest()) {
+            throw new Error("label.error.invoice.already.used");
+        }
+
+        final Money documentValue = sapRequest.getValue();
+        final CreditEntry creditEntry = EventProcessor.getCreditEntry(documentValue);
+        if (requestType == SapRequestType.INVOICE || requestType == SapRequestType.INVOICE_INTEREST) {
+            final SapRequest creditRequest = registerCredit(event, creditEntry, documentValue, sapRequest);
+            creditRequest.setIgnore(true);
+        } else if (requestType == SapRequestType.DEBT) {
+            final SapRequest debtCreditRequest = registerDebtCredit(sapRequest.getClientId(), event, documentValue, creditEntry, sapRequest, true);
+            debtCreditRequest.setIgnore(true);
+        }
+        sapRequest.setIgnore(true);
     }
 
     @Atomic
@@ -152,40 +175,39 @@ public class SapEvent {
         final SapRequestType requestType = sapRequest.getRequestType();
         if (requestType != SapRequestType.INVOICE
                 && requestType != SapRequestType.INVOICE_INTEREST
-                && requestType != SapRequestType.CREDIT
                 && requestType != SapRequestType.PAYMENT
                 && requestType != SapRequestType.PAYMENT_INTEREST
-                && requestType != SapRequestType.ADVANCEMENT) {
+                && requestType != SapRequestType.ADVANCEMENT
+                && requestType != SapRequestType.CREDIT) {
             throw new Error("label.document.type.cannot.be.canceled");
         }
-        event.getSapRequestSet().stream()
-                .filter(r -> !r.getIgnore())
-                .filter(r -> r != sapRequest && r.refersToDocument(sapRequest.getDocumentNumber()))
-                .findAny().ifPresent(r -> {
-                    throw new Error("label.error.invoice.already.used");
-                });
+        if (sapRequest.isReferencedByOtherRequest()) {
+            throw new Error("label.error.invoice.already.used");
+        }
 
         JsonObject jsonAnnulled = new JsonParser().parse(sapRequest.getRequest()).getAsJsonObject();
         if (requestType == SapRequestType.INVOICE
                 || requestType == SapRequestType.INVOICE_INTEREST
-                || requestType == SapRequestType.CREDIT
-                || requestType == SapRequestType.ADVANCEMENT) {
+                || requestType == SapRequestType.ADVANCEMENT
+                || requestType == SapRequestType.CREDIT) {
             final JsonObject workDocument = jsonAnnulled.get("workingDocument").getAsJsonObject();
             workDocument.addProperty("workStatus", "A");
             workDocument.addProperty("documentDate", new DateTime().toString("yyyy-MM-dd HH:mm:ss"));
         }
+        if (requestType == SapRequestType.CREDIT){
+            final JsonObject paymentDocument = jsonAnnulled.get("paymentDocument").getAsJsonObject();
+            final JsonObject workDocument = jsonAnnulled.get("workingDocument").getAsJsonObject();
+            workDocument.addProperty("workOriginDocNumber", paymentDocument.get("paymentDocumentNumber").getAsString());
+        }
         if (requestType == SapRequestType.PAYMENT
                 || requestType == SapRequestType.PAYMENT_INTEREST
-                || requestType == SapRequestType.CREDIT
-                || requestType == SapRequestType.ADVANCEMENT) {
-            final JsonObject workDocument = jsonAnnulled.get("paymentDocument").getAsJsonObject();
-            workDocument.addProperty("paymentStatus", "A");
-            workDocument.addProperty("paymentDate", new DateTime().toString("yyyy-MM-dd HH:mm:ss"));
+                || requestType == SapRequestType.ADVANCEMENT
+                || requestType == SapRequestType.CREDIT) {
+            final JsonObject paymentDocument = jsonAnnulled.get("paymentDocument").getAsJsonObject();
+            paymentDocument.addProperty("paymentStatus", "A");
+            paymentDocument.addProperty("paymentDate", new DateTime().toString("yyyy-MM-dd HH:mm:ss"));
         }
-        if (requestType == SapRequestType.CREDIT && isToProcessDebt(sapRequest.getEvent(), sapRequest.getEvent().isGratuity())) {
-            registerDebt(sapRequest.getValue(), event, true);
-        }
-            
+
         final SapRequest sapRequestAnnulled = new SapRequest(sapRequest.getEvent(), sapRequest.getClientId(), sapRequest.getValue(),
                 sapRequest.getDocumentNumber(), sapRequest.getRequestType(), sapRequest.getAdvancement(), jsonAnnulled);
         sapRequest.setAnulledRequest(sapRequestAnnulled);
@@ -193,7 +215,15 @@ public class SapEvent {
     }
 
     @Atomic
-    public void cancelDebt() throws Exception {
+    public void cancelCredit(final SapRequest sapRequest) {
+        if (sapRequest.getRequestType() != SapRequestType.CREDIT) {
+            throw new Error("label.document.type.cancel.not.credit");
+        }
+        registerInvoice(sapRequest.getValue(), sapRequest.getEvent(), sapRequest.getEvent().isGratuity(), true);
+    }
+
+    @Atomic
+    public void cancelDebt() {
         if (getFilteredSapRequestStream().anyMatch(r -> !r.isDebtDocument())) {
             throw new Error("label.error.cannot.cancel.debt.active.documents");
         }
@@ -208,18 +238,18 @@ public class SapEvent {
         getFilteredSapRequestStream().forEach(r -> r.setIgnore(true));
     }
 
-    public void updateInvoiceWithNewClientData() throws Exception {
+    public void updateInvoiceWithNewClientData() {
         for (final SapRequest sapRequest : getFilteredSapRequestStream().filter(r -> r.getRequest().length() > 2).collect(Collectors.toSet())) {
             updateInvoiceWithNewClientData(sapRequest);
         }
     }
 
-    private void updateInvoiceWithNewClientData(final SapRequest sapRequest) throws Exception {
+    private void updateInvoiceWithNewClientData(final SapRequest sapRequest) {
         final SapRequestType requestType = sapRequest.getRequestType();
         if (requestType != SapRequestType.INVOICE) {
             return;
         }
-        if (event.getSapRequestSet().stream().anyMatch(r -> r != sapRequest && r.refersToDocument(sapRequest.getDocumentNumber()))) {
+        if (sapRequest.isReferencedByOtherRequest()) {
             return;
         }
         final String clientId = ClientMap.uVATNumberFor(event.getParty());
@@ -236,28 +266,10 @@ public class SapEvent {
         sapRequest.setIgnore(true);
         creditRequest.setIgnore(true);
 
-        final JsonObject data = toJsonInvoice(event, invoiceValue, getDocumentDate(event.getWhenOccured(), true), new DateTime(), clientId, false, false);
+        final JsonObject data = toJsonInvoice(event, invoiceValue, getDocumentDate(event.getWhenOccured(), true), new DateTime(), clientId, false, false, false);
         final String documentNumber = getDocumentNumber(data, false);
         new SapRequest(event, clientId, invoiceValue, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
     }
-
-//    private SapRequest registerPaymentFromAdvancement(Event event, String clientId, Money advancementAmount, SapRequest invoiceRequest,
-//            ErrorLogConsumer errorLog, EventLogger elogger) throws Exception {
-//
-//        checkValidDocumentNumber(invoiceRequest.getDocumentNumber(), event);
-//
-//        // ver se o valor da divida é superior ou igual ao advancement, se for tudo ok, caso contrário é registar o pagamento no valor da factura
-//        // e abater esse valor ao advancement
-//        Money amountToRegister = advancementAmount;
-//        if (advancementAmount.greaterThan(invoiceRequest.getValue())) {
-//            amountToRegister = invoiceRequest.getValue();
-//        }
-//
-//        JsonObject data = toJsonPaymentFromAdvancement(event, invoiceRequest, amountToRegister);
-//        String documentNumber = getDocumentNumber(data, true);
-//        return new SapRequest(event, clientId, amountToRegister, documentNumber, SapRequestType.PAYMENT,
-//                amountToRegister.negate(), data);
-//    }
 
     private SapRequest registerDebt(Money debtFenix, Event event, boolean isNewDate) {
         String clientId = ClientMap.uVATNumberFor(event.getParty());
@@ -268,16 +280,17 @@ public class SapEvent {
         return new SapRequest(event, clientId, debtFenix, documentNumber, SapRequestType.DEBT, Money.ZERO, data);
     }
 
-    private void registerDebtCredit(CreditEntry creditEntry, Event event, boolean isNewDate) throws Exception {
+    private void registerDebtCredit(CreditEntry creditEntry, Event event, boolean isNewDate) {
 
         String clientId = ClientMap.uVATNumberFor(event.getParty());
         SimpleImmutableEntry<List<SapRequest>, Money> openDebtsAndRemainingValue = getOpenDebtsAndRemainingValue();
         List<SapRequest> openDebts = openDebtsAndRemainingValue.getKey();
         Money remainingAmount = openDebtsAndRemainingValue.getValue();
+        final Money amountToRegister = new Money(creditEntry.getUsedAmountInDebts());
         if (creditEntry.getAmount().compareTo(remainingAmount.getAmount()) == 1) {
             if (openDebts.size() > 1) {
                 // dividir o valor da isenção pelas várias dívidas
-                registerDebtCreditList(event, openDebts, new Money(creditEntry.getAmount()), creditEntry, remainingAmount,
+                registerDebtCreditList(event, openDebts, amountToRegister, creditEntry, remainingAmount,
                         clientId, isNewDate);
             } else {
                 // o valor da isenção é superior ao valor em dívida
@@ -287,17 +300,16 @@ public class SapEvent {
                 } else { // não existe nenhuma dívida aberta, ir buscar a última
                     debt = getLastDebt();
                 }
-                registerDebtCredit(clientId, event, new Money(creditEntry.getAmount()), creditEntry, debt, isNewDate);
+                registerDebtCredit(clientId, event, amountToRegister, creditEntry, debt, isNewDate);
             }
         } else {
             //tudo normal
-            registerDebtCredit(clientId, event, new Money(creditEntry.getAmount()), creditEntry, openDebts.get(0), isNewDate);
+            registerDebtCredit(clientId, event, amountToRegister, creditEntry, openDebts.get(0), isNewDate);
         }
     }
 
     private void registerDebtCreditList(Event event, List<SapRequest> openDebts, Money amountToRegister, CreditEntry creditEntry,
-            Money remainingAmount, String clientId, boolean isNewDate)
-            throws Exception {
+                                        Money remainingAmount, String clientId, boolean isNewDate) {
         if (amountToRegister.greaterThan(remainingAmount)) {
             if (openDebts.size() > 1) {
                 registerDebtCredit(clientId, event, remainingAmount, creditEntry, openDebts.get(0), isNewDate);
@@ -311,8 +323,8 @@ public class SapEvent {
         }
     }
 
-    private void registerDebtCredit(String clientId, Event event, Money amountToRegister, CreditEntry creditEntry,
-            SapRequest debtRequest, boolean isNewDate) throws Exception {
+    private SapRequest registerDebtCredit(String clientId, Event event, Money amountToRegister, CreditEntry creditEntry,
+                                          SapRequest debtRequest, boolean isNewDate) {
         checkValidDocumentNumber(debtRequest.getDocumentNumber(), event);
 
         JsonObject data = toJsonDebtCredit(event, amountToRegister, clientId,
@@ -321,63 +333,30 @@ public class SapEvent {
         SapRequest sapRequest =
                 new SapRequest(event, clientId, amountToRegister, documentNumber, SapRequestType.DEBT_CREDIT, Money.ZERO, data);
         sapRequest.setCreditId(creditEntry.getId());
+        return sapRequest;
     }
 
-    public void registerCredit(Event event, CreditEntry creditEntry, boolean isGratuity, ErrorLogConsumer errorLog,
-            EventLogger elogger) throws Exception {
+    public void registerCredit(Event event, CreditEntry creditEntry, boolean isGratuity) {
         // diminuir divida no sap (se for propina diminuir dívida) e credit note na última factura existente
-        // se o valor pago nesta factura for superior à nova dívida, o que fazer? terá que existir nota crédito no fenix -> sim
-
-        if (isToProcessDebt(event, isGratuity)) {
-            //if the debt credit amount is greater than the credit amount it means that a credit debt was registered but the correspondent invoice credit failed
-            //we don't register the credit debt again
-            if (!getDebtCreditAmount().greaterThan(getCreditAmount())) {
-                registerDebtCredit(creditEntry, event, true);
-            }
+        if (isToProcessDebt(isGratuity, true, new DateTime())) {
+            registerDebtCredit(creditEntry, event, false);
         }
 
-        String clientId = ClientMap.uVATNumberFor(event.getParty());
+        final SortedMap<SapRequest, Money> openInvoices = getOpenInvoicesAndRemainingValue();
+        Money amountToCredit = new Money(creditEntry.getUsedAmountInDebts());
+        for (final Entry<SapRequest, Money> entry : openInvoices.entrySet()) {
+            if (amountToCredit.isPositive()) {
+                final SapRequest invoice = entry.getKey();
+                final Money openInvoiceAmount = entry.getValue();
 
-        SimpleImmutableEntry<List<SapRequest>, Money> openInvoicesAndRemainingValue = getOpenInvoicesAndRemainingValue();
-        List<SapRequest> openInvoices = openInvoicesAndRemainingValue.getKey();
-        Money remainingAmount = openInvoicesAndRemainingValue.getValue();
-        if (creditEntry.getAmount().compareTo(remainingAmount.getAmount()) == 1) {
-            if (openInvoices.size() > 1) {
-                // dividir o valor da isenção pelas várias facturas....
-                registerCreditList(event, openInvoices, creditEntry, new Money(creditEntry.getAmount()), remainingAmount,
-                        clientId, errorLog, elogger);
-            } else {
-                // o valor da isenção é superior ao valor em dívida
-                SapRequest invoiceNumber = null;
-                if (openInvoices.size() == 1) { // mas só existe uma factura abertura
-                    invoiceNumber = openInvoices.get(0);
-                } else { // não existe nenhuma factura aberta, ir buscar a última
-                    invoiceNumber = getLastInvoiceNumber();
-                }
-                registerCredit(event, creditEntry, new Money(creditEntry.getAmount()), invoiceNumber);
+                final Money amountForInvoice = Money.min(openInvoiceAmount, amountToCredit);
+                registerCredit(event, creditEntry, amountForInvoice, invoice);
+                amountToCredit = amountToCredit.subtract(amountForInvoice);
             }
-        } else {
-            //tudo normal
-            registerCredit(event, creditEntry, new Money(creditEntry.getAmount()), openInvoices.get(0));
         }
     }
 
-    private void registerCreditList(Event event, List<SapRequest> openInvoices, CreditEntry creditEntry, Money amountToRegister,
-            Money remainingAmount, String clientId, ErrorLogConsumer errorLog, EventLogger elogger) throws Exception {
-        if (amountToRegister.greaterThan(remainingAmount)) {
-            if (openInvoices.size() > 1) {
-                registerCredit(event, creditEntry, remainingAmount, openInvoices.get(0));
-                registerCreditList(event, openInvoices.subList(1, openInvoices.size()), creditEntry,
-                        amountToRegister.subtract(remainingAmount), openInvoices.get(1).getValue(), clientId, errorLog, elogger);
-            } else {
-                registerCredit(event, creditEntry, amountToRegister, openInvoices.get(0));
-            }
-        } else {
-            registerCredit(event, creditEntry, amountToRegister, openInvoices.get(0));
-        }
-    }
-
-    private SapRequest registerCredit(Event event, CreditEntry creditEntry, Money creditAmount, SapRequest sapInvoiceRequest) throws Exception {
+    private SapRequest registerCredit(Event event, CreditEntry creditEntry, Money creditAmount, SapRequest sapInvoiceRequest) {
         checkValidDocumentNumber(sapInvoiceRequest.getDocumentNumber(), event);
 
         JsonObject data = toJsonCredit(event, getDocumentDate(creditEntry.getCreated(), false), creditAmount, sapInvoiceRequest, false, true);
@@ -388,48 +367,142 @@ public class SapEvent {
         return sapRequest;
     }
 
-    public SapRequest registerReimbursement(Event event, Money amount, ErrorLogConsumer errorLog, EventLogger elogger)
-            throws Exception {
+    public void registerReimbursement(Refund refund) {
+        Money paymentsInSap = getFilteredSapRequestStream()
+            .filter(sr -> sr.getRequestType() == SapRequestType.INVOICE && sr.getRequest().length() > 2)
+            .sorted(SapRequest.COMPARATOR_BY_EVENT_AND_ORDER)
+            .map(sr -> registerReimbursement(sr, refund))
+            .reduce(Money.ZERO, Money::add);
 
-        SapRequest sapInvoiceRequest = getLastInvoiceNumber();
-        checkValidDocumentNumber(sapInvoiceRequest.getDocumentNumber(), event);
-
-        String clientId = ClientMap.uVATNumberFor(event.getParty());
-        JsonObject data = toJsonReimbursement(event, amount, sapInvoiceRequest, false, true);
-
-        String documentNumber = getDocumentNumber(data, true);
-        return new SapRequest(event, clientId, amount, documentNumber, SapRequestType.REIMBURSEMENT, Money.ZERO, data);
+        if(!refund.getAmount().equals(paymentsInSap.getAmount())){
+            throw new Error("The value given for refund (" + refund.getId() + ") does not match the value of payments in SAP."
+                    + "Refund amount: " + refund.getAmount() + " - payments in SAP: " + paymentsInSap.getAmountAsString());
+        }
     }
 
-    private void registerInterest(final Money payedInterest, final String clientId,
-            final AccountingTransactionDetail transactionDetail, final ErrorLogConsumer errorLog, final EventLogger elogger)
-            throws Exception {
+    private Money registerReimbursement(final SapRequest sapInvoiceRequest, final Refund refund) {
+        checkValidDocumentNumber(sapInvoiceRequest.getDocumentNumber(), event);
+
+        final String clientId = ClientMap.uVATNumberFor(event.getParty());
+        final Money payedAmount = calculateAmountPayedForInvoice(sapInvoiceRequest);
+        final Money openInvoiceValue = invoiceValueWithoutCredits(sapInvoiceRequest);
+
+        //if the invoice generated debt we have to send a debt credit
+        if (isToProcessDebt(event.isGratuity(), true, new DateTime())) {
+            registerDebtCredit(EventProcessor.getCreditEntry(openInvoiceValue), event, true);
+        }
+
+        org.fenixedu.academic.domain.accounting.Refund domainRefund = FenixFramework.getDomainObject(refund.getId());
+        if (payedAmount.isZero()) {
+            //when a reimbursement is done it's of the total value of the event and event is closed, so we have to close all invoices
+            //if for an invoice no payment was done we just have to send a credit note to close it, no real reimbursement needed
+            final JsonObject jsonCredit = toJsonCredit(event, new DateTime(), openInvoiceValue, sapInvoiceRequest, false, true);
+            final String documentNumber = getDocumentNumber(jsonCredit, true);
+            final SapRequest sapRequestNA = new SapRequest(event, clientId, openInvoiceValue, documentNumber, SapRequestType.CREDIT, Money.ZERO, jsonCredit);
+            sapRequestNA.setRefund(domainRefund);
+        } else {
+            final JsonObject data = toJsonReimbursement(event, payedAmount, openInvoiceValue, sapInvoiceRequest, false, true);
+            final String documentNumber = getDocumentNumber(data, true);
+            SapRequest reimbursement = new SapRequest(event, clientId, payedAmount, documentNumber, SapRequestType.REIMBURSEMENT, Money.ZERO, data);
+            reimbursement.setRefund(domainRefund);
+
+            //we must create a fictious credit note request so that we know that the invoice is closed
+            SapRequest creditNoteRequest = new SapRequest(event, clientId, openInvoiceValue, documentNumber, SapRequestType.CREDIT, Money.ZERO, data);
+            creditNoteRequest.setSent(true);
+            creditNoteRequest.setIntegrated(true);
+            creditNoteRequest.setRefund(domainRefund);
+        }
+        return payedAmount;
+    }
+
+    private Money invoiceValueWithoutCredits(final SapRequest sapInvoiceRequest) {
+        final Money value = sapInvoiceRequest.getValue();
+        final Money credits = getFilteredSapRequestStream()
+                .filter(sr -> sr.getRequestType() == SapRequestType.CREDIT && sr.refersToDocument(sapInvoiceRequest.getDocumentNumber()))
+                .map(SapRequest::getValue)
+                .reduce(Money.ZERO, Money::add);
+        return value.subtract(credits);
+    }
+
+    private Money calculateAmountPayedForInvoice(final SapRequest sapInvoiceRequest) {
+        return getFilteredSapRequestStream()
+            .filter(sr -> (sr.getRequestType() == SapRequestType.PAYMENT || sr.getRequestType() == SapRequestType.ADVANCEMENT)
+                            && sr.refersToDocument(sapInvoiceRequest.getDocumentNumber()))
+            .map(sr -> sr.getValue())
+            .reduce(Money.ZERO, Money::add);
+    }
+
+    public void registerReimbursementAdvancement(ExcessRefund excessRefund) {
+        excessRefund.getPartialPayments().stream().forEach(p -> registerReimbursementAdvancement(p));
+    }
+
+    private SapRequest registerReimbursementAdvancement(PartialPayment partialPayment) {
+        final List<SapRequest> paymentsFor = getAdvancementPaymentsFor(partialPayment.getCreditEntry().getId()).collect(Collectors.toList());
+        if (paymentsFor.size() > 1) {
+            throw new Error("More than one advancement payment was done with ID " +
+                    partialPayment.getCreditEntry().getId() + " - can not make reimbursement");
+        }
+        SapRequest advPayment = paymentsFor.iterator().next();
+        if(advPayment.getAdvancement().lessThan(new Money(partialPayment.getAmount()))) {
+            throw new Error("Trying to reimburse more value than what was sent in request for payment: " +
+                    partialPayment.getCreditEntry().getId() + " - can not make reimbursement");
+        }
+
+        String clientId = ClientMap.uVATNumberFor(event.getParty());
+        JsonObject data = toJsonReimbursementAdvancement(advPayment, false, true);
+
+        String documentNumber = getDocumentNumber(data, true);
+        SapRequest reimbursementRequest = new SapRequest(event, clientId, new Money(partialPayment.getAmount()), documentNumber, SapRequestType.REIMBURSEMENT, Money.ZERO, data);
+        reimbursementRequest.setAdvancementRequest(advPayment);
+        return reimbursementRequest;
+    }
+
+
+    public void registerPastPayment(final Payment payment) {
+        String clientId = ClientMap.uVATNumberFor(event.getParty());
+        AccountingTransaction transaction = FenixFramework.getDomainObject(payment.getId());
+
+        final Money payedInterest = new Money(payment.getUsedAmountInInterests().add(payment.getUsedAmountInFines()));
+        if (payedInterest.isPositive()) {
+            registerInterest(payedInterest, clientId, transaction.getTransactionDetail());
+        }
+
+        final Money amountPayed = new Money(payment.getUsedAmountInDebts());
+        if (amountPayed.isPositive()) {
+            // registering the invoice
+            SapRequest pastInvoiceRequest = registerPastInvoice(amountPayed, clientId,
+                    transaction.getTransactionDetail(), transaction.getTransactionDetail().getWhenRegistered());
+            // registering the payment
+            registerSinglePayment(transaction.getTransactionDetail(), amountPayed, pastInvoiceRequest, false, true, SapRequestType.PAYMENT);
+        }
+    }
+
+    private SapRequest registerPastInvoice(final Money amountPayed, final String clientId, final AccountingTransactionDetail transactionDetail,
+                                           DateTime paymentDate) {
+        JsonObject data = toJsonInvoice(event, amountPayed, paymentDate, new DateTime(), clientId, false, false, true);
+
+        String documentNumber = getDocumentNumber(data, false);
+        SapRequest sapRequest = new SapRequest(event, clientId, amountPayed, documentNumber, SapRequestType.INVOICE, Money.ZERO, data);
+        sapRequest.setPayment(transactionDetail.getTransaction());
+        return sapRequest;
+    }
+
+    private void registerInterest(final Money payedInterest, final String clientId, final AccountingTransactionDetail transactionDetail) {
 
         if (hasInterestPayment(transactionDetail.getTransaction())) {
-            return; //both invoice and payment requests have been integrated
+            return; //both invoice and payment requests have been processed
         }
 
-        SapRequest interestInvoiceRequest = getInterestInvoiceRequest(transactionDetail.getTransaction());
-        if (interestInvoiceRequest == null) {
-            // registering the invoice
-            interestInvoiceRequest = registerInterestInvoice(payedInterest, clientId, transactionDetail,
-                    getDocumentDate(transactionDetail.getWhenProcessed(), false), errorLog, elogger);
-        }
-//        else {
-//            // the interest invoice was integrated but for some reason the interest payment request was not created
-//        }
-
-        // even if the invoice fails (in the integration with SAP) we want to register the request
-        // so that when the invoice interest is integrated the pending interest payment is resent and integrated also 
+        // registering the invoice
+        SapRequest interestInvoiceRequest = registerInterestInvoice(payedInterest, clientId, transactionDetail,
+                    transactionDetail.getWhenRegistered());
         // registering the payment
-        registerInterestPayment(payedInterest, interestInvoiceRequest, transactionDetail, errorLog, elogger);
+        registerInterestPayment(payedInterest, interestInvoiceRequest, transactionDetail);
     }
 
     private SapRequest registerInterestInvoice(final Money payedInterest, final String clientId,
-            final AccountingTransactionDetail transactionDetail, DateTime paymentDate, final ErrorLogConsumer errorLog,
-            final EventLogger elogger) throws Exception {
-        JsonObject data = toJsonInvoice(event, payedInterest, paymentDate, new DateTime(), clientId, false,
-                true);
+                                               final AccountingTransactionDetail transactionDetail, DateTime paymentDate) {
+        JsonObject data = toJsonInvoice(event, payedInterest, paymentDate, new DateTime(), clientId, false,true, false);
 
         String documentNumber = getDocumentNumber(data, false);
         SapRequest sapRequest = new SapRequest(event, clientId, payedInterest, documentNumber,
@@ -439,31 +512,26 @@ public class SapEvent {
     }
 
     private void registerInterestPayment(final Money payedInterest, SapRequest sapInvoiceRequest,
-            final AccountingTransactionDetail transactionDetail, final ErrorLogConsumer errorLog, final EventLogger elogger) throws Exception {
-        JsonObject data = toJsonPayment(transactionDetail, payedInterest, sapInvoiceRequest, true);
-
-        String documentNumber = getDocumentNumber(data, true);
-        SapRequest sapRequest = new SapRequest(event, sapInvoiceRequest.getClientId(), payedInterest, documentNumber,
-                SapRequestType.PAYMENT_INTEREST, Money.ZERO, data);
-        sapRequest.setPayment(transactionDetail.getTransaction());
+                                         final AccountingTransactionDetail transactionDetail) {
+        registerSinglePayment(transactionDetail, payedInterest, sapInvoiceRequest, true, false, SapRequestType.PAYMENT_INTEREST);
     }
 
-    public void registerPayment(Payment payment, ErrorLogConsumer errorLog, EventLogger elogger) throws Exception {
+    public void registerPayment(final CreditEntry payment) {
 
-        AccountingTransactionDetail transactionDetail =
+        final AccountingTransactionDetail transactionDetail =
                 ((AccountingTransaction) FenixFramework.getDomainObject(payment.getId())).getTransactionDetail();
-        String clientId = ClientMap.uVATNumberFor(event.getParty());
 
-        // ir buscar a ultima factura aberta e verificar se o pagamento ultrapassa o valor da factura
-        // e associar o restante à(s) factura(s) seguinte(s)
-        SimpleImmutableEntry<List<SapRequest>, Money> openInvoicesAndRemainingAmount = getOpenInvoicesAndRemainingValue();
+        // if it is an internal imputation gets a different treatment
+        if(Bennu.getInstance().getInternalPaymentMethod().equals(getPaymentMethodReference(transactionDetail))) {
+            registerCredit(event, payment, false);
+            return;
+        }
 
-        Money firstRemainingAmount = openInvoicesAndRemainingAmount.getValue();
-        List<SapRequest> openInvoices = openInvoicesAndRemainingAmount.getKey();
+        final String clientId = ClientMap.uVATNumberFor(event.getParty());
 
         final Money payedInterest = new Money(payment.getUsedAmountInInterests().add(payment.getUsedAmountInFines()));
         if (payedInterest.isPositive()) {
-            registerInterest(payedInterest, clientId, transactionDetail, errorLog, elogger);
+            registerInterest(payedInterest, clientId, transactionDetail);
         }
 
         Money payedAmount = new Money(payment.getAmount()).subtract(payedInterest);
@@ -472,73 +540,204 @@ public class SapEvent {
             return;
         }
 
-        if (firstRemainingAmount.isZero()) {
-            // não há facturas abertas, fazer adiantamento, sobre a última factura!!
-            registerAdvancement(Money.ZERO, payedAmount, getLastInvoiceNumber(), transactionDetail, errorLog, elogger);
-        }
-
-        if (firstRemainingAmount.lessThan(payedAmount)) {
-            // quer dizer que ou há outra factura aberta ou é um pagamento em excesso
-            // dividir o valor pago pela facturas e registar n pagamentos ou registar um pagamento adiamento
-
-            if (openInvoices.size() == 1) {
-                // só há uma factura aberta -> fazer adiantamento
-                registerAdvancement(firstRemainingAmount, payedAmount.subtract(firstRemainingAmount), openInvoices.get(0),
-                        transactionDetail, errorLog, elogger);
-            } else {
-                // vai distribuir o pagamento pelas restantes facturas abertas
-                registerPaymentList(openInvoices, payedAmount, firstRemainingAmount, clientId, transactionDetail, errorLog,
-                        elogger);
-            }
+        final SortedMap<SapRequest, Money> openInvoices = getOpenInvoicesAndRemainingValue();
+        if (openInvoices.size() == 0) {
+            registerAdvancementOnly(clientId, transactionDetail, payedAmount);
         } else {
-            // tudo ok, é só registar o pagamento
-            registerPayment(transactionDetail, payedAmount, openInvoices.get(0), errorLog, elogger);
+            registerPayment(transactionDetail, payedAmount, (Entry<SapRequest, Money>[]) openInvoices.entrySet().toArray(new Entry[0]));
         }
     }
 
-    private void registerPaymentList(List<SapRequest> openInvoices, Money amountToRegister, Money remainingAmount,
-            String clientId, AccountingTransactionDetail transactionDetail, ErrorLogConsumer errorLog, EventLogger elogger)
-            throws Exception {
-        if (amountToRegister.greaterThan(remainingAmount)) {
-            if (openInvoices.size() > 1) {
-                registerPayment(transactionDetail, remainingAmount, openInvoices.get(0), errorLog,
-                        elogger);
-                registerPaymentList(openInvoices.subList(1, openInvoices.size()), amountToRegister.subtract(remainingAmount),
-                        openInvoices.get(1).getValue(), clientId, transactionDetail, errorLog, elogger);
+    private void registerPayment(final AccountingTransactionDetail transactionDetail, final Money payedAmount, final Entry<SapRequest, Money>[] openInvoices) {
+        if (payedAmount.isPositive()) {
+            final Entry<SapRequest, Money> entry = openInvoices[0];
+            final SapRequest openInvoice = entry.getKey();
+            final Money openInvoiceValue = entry.getValue();
+
+            if (openInvoiceValue.greaterOrEqualThan(payedAmount)) {
+                registerPayment(transactionDetail, payedAmount, openInvoice, openInvoiceValue, false);
+            } else if (openInvoices.length > 1) {
+                registerPayment(transactionDetail, openInvoiceValue, openInvoice, openInvoiceValue, false);
+                registerPayment(transactionDetail, payedAmount.subtract(openInvoiceValue), Arrays.copyOfRange(openInvoices, 1, openInvoices.length));
             } else {
-                // neste ponto sabemos sempre que existe pelo menos uma factura em aberto e que o remaining amout nunca é zero
-                // portanto se não entrou no if de cima quer dizer que só existe uma factura aberta
-                // registar adiantamento
-                registerAdvancement(remainingAmount, amountToRegister.subtract(remainingAmount), openInvoices.get(0),
-                        transactionDetail, errorLog, elogger);
+                registerAdvancement(openInvoiceValue, payedAmount.subtract(openInvoiceValue), openInvoice, transactionDetail);
             }
-        } else {
-            registerPayment(transactionDetail, amountToRegister, openInvoices.get(0), errorLog,
-                    elogger);
         }
     }
 
-    private void registerPayment(AccountingTransactionDetail transactionDetail, Money payedAmount, SapRequest sapInvoiceRequest,
-            ErrorLogConsumer errorLog, EventLogger elogger) throws Exception {
+    private void registerAdvancementOnly(final String clientId, final AccountingTransactionDetail transactionDetail, final Money payedAmount) {
+        final JsonObject data = toJsonAdvancementOnly(clientId, transactionDetail, payedAmount);
+        String documentNumber = getDocumentNumber(data, true);
+        SapRequest sapRequest = new SapRequest(event, clientId, Money.ZERO, documentNumber,
+                SapRequestType.ADVANCEMENT, payedAmount, data);
+        sapRequest.setPayment(transactionDetail.getTransaction());
+    }
+
+    private JsonObject toJsonAdvancementOnly(final String clientId, final AccountingTransactionDetail transactionDetail, final Money amount) {
+        final JsonObject clientData = toJsonClient(event.getParty(), clientId);
+        JsonObject data = toJson(event, clientData, transactionDetail.getWhenRegistered(), false, false, false, true, false);
+        JsonObject paymentDocument = toJsonPaymentDocument(Money.ZERO, "NP", "", transactionDetail.getWhenRegistered(),
+                getPaymentMechanism(transactionDetail), getPaymentMethodReference(transactionDetail),
+                SAFTPTSettlementType.NL.toString(), true);
+        paymentDocument.addProperty("isWithoutLines", true);
+        paymentDocument.addProperty("noPaymentTotals", true);
+        paymentDocument.addProperty("isAdvancedPayment", true);
+        paymentDocument.addProperty("excessPayment", amount.getAmountAsString());
+
+        JsonObject workingDocument = toJsonWorkDocument(getDocumentDate(transactionDetail.getWhenRegistered(), false),
+                new DateTime(), amount, "NA", false, transactionDetail.getWhenRegistered());
+        workingDocument.addProperty("isAdvancedPayment", true);
+        workingDocument.addProperty("paymentDocumentNumber", paymentDocument.get("paymentDocumentNumber").getAsString());
+        //the payment document has to refer the working document credit note number
+        paymentDocument.addProperty("originatingOnDocumentNumber", workingDocument.get("workingDocumentNumber").getAsString());
+
+        data.add("workingDocument", workingDocument);
+        data.add("paymentDocument", paymentDocument);
+
+        return data;
+    }
+
+    private void registerPayment(AccountingTransactionDetail transactionDetail, Money payedAmount, SapRequest sapInvoiceRequest, Money remainingInvoiceAmount, boolean isPastPayment) {
 
         checkValidDocumentNumber(sapInvoiceRequest.getDocumentNumber(), event);
 
-        JsonObject data = toJsonPayment(transactionDetail, payedAmount, sapInvoiceRequest, false);
+        if (payedAmount.equals(sapInvoiceRequest.getValue())) {
+            registerSinglePayment(transactionDetail, payedAmount, sapInvoiceRequest, false, isPastPayment, SapRequestType.PAYMENT);
+        } else if (payedAmount.equals(remainingInvoiceAmount)) {
+            registerFinalPayment(transactionDetail, payedAmount, sapInvoiceRequest, false, SapRequestType.PAYMENT, getPaymentsFor(sapInvoiceRequest));
+        } else {
+            //é um pagamento parcial é um pagamento normal
+            registerSinglePayment(transactionDetail, payedAmount, sapInvoiceRequest, false, isPastPayment, SapRequestType.PAYMENT);
+        }
+    }
+
+    private void registerFinalPayment(final AccountingTransactionDetail transactionDetail, final Money payedAmount, final SapRequest sapInvoiceRequest,
+                                      final boolean isInterest, final SapRequestType requestType, final Stream<SapRequest> paymentsFor) {
+        JsonObject data = toJsonFinalPayment(transactionDetail, payedAmount, sapInvoiceRequest, isInterest, paymentsFor);
+
         String documentNumber = getDocumentNumber(data, true);
         SapRequest sapRequest = new SapRequest(event, sapInvoiceRequest.getClientId(), payedAmount, documentNumber,
-                SapRequestType.PAYMENT, Money.ZERO, data);
+                requestType, Money.ZERO, data);
         sapRequest.setPayment(transactionDetail.getTransaction());
     }
 
-    private void registerAdvancement(Money amount, Money advancement, SapRequest sapInvoiceRequest,
-            AccountingTransactionDetail transactionDetail, ErrorLogConsumer errorLog, EventLogger elogger) throws Exception {
+    private JsonObject toJsonFinalPayment(final AccountingTransactionDetail transactionDetail, final Money payedAmount, final SapRequest sapInvoiceRequest,
+                                          final boolean isInterest, final Stream<SapRequest> paymentsFor) {
+        //the debit amount of the final payment must be the value of the invoice
+        JsonObject data = toJsonPayment(transactionDetail, sapInvoiceRequest.getValue(), sapInvoiceRequest, isInterest, false);
+        JsonObject paymentDocument = data.get("paymentDocument").getAsJsonObject();
+
+
+        final JsonArray payments = new JsonArray();
+        paymentsFor.forEach(sr -> {
+            JsonObject line = new JsonObject();
+            line.addProperty("amount", sr.getValue().getAmountAsString());
+            line.addProperty("isToDebit", false);
+            line.addProperty("originDocNumber", sr.getDocumentNumber());
+            payments.add(line);
+        });
+        //the payment amount in must be the the actual amount payed
+        paymentDocument.addProperty("excessPayment", payedAmount.subtract(sapInvoiceRequest.getValue()).toPlainString());
+        paymentDocument.add("documents", payments);
+        paymentDocument.addProperty("noPaymentTotals", true);
+        return data;
+    }
+
+    private void registerSinglePayment(final AccountingTransactionDetail transactionDetail, final Money payedAmount, final SapRequest sapInvoiceRequest,
+                                       final boolean isInterest, final boolean isPastPayment, final SapRequestType requestType) {
+        JsonObject data = toJsonPayment(transactionDetail, payedAmount, sapInvoiceRequest, isInterest, isPastPayment);
+        String documentNumber = getDocumentNumber(data, true);
+
+        SapRequest sapRequest = new SapRequest(event, sapInvoiceRequest.getClientId(), payedAmount, documentNumber,
+                requestType, Money.ZERO, data);
+        sapRequest.setPayment(transactionDetail.getTransaction());
+    }
+
+    private void registerAdvancement(Money amount, Money advancement, SapRequest sapInvoiceRequest, AccountingTransactionDetail transactionDetail) {
         checkValidDocumentNumber(sapInvoiceRequest.getDocumentNumber(), event);
 
-        JsonObject data = toJsonAdvancement(amount, advancement, sapInvoiceRequest, transactionDetail);
-        String documentNumber = getDocumentNumber(data, true);
-        SapRequest sapRequest = new SapRequest(event, sapInvoiceRequest.getClientId(), amount, documentNumber,
-                SapRequestType.ADVANCEMENT, advancement, data);
-        sapRequest.setPayment(transactionDetail.getTransaction());
+        if (amount.equals(sapInvoiceRequest.getValue())) {
+            JsonObject data = toJsonAdvancement(amount, advancement, sapInvoiceRequest, transactionDetail);
+            String documentNumber = getDocumentNumber(data, true);
+            SapRequest sapRequest = new SapRequest(event, sapInvoiceRequest.getClientId(), amount, documentNumber,
+                    SapRequestType.ADVANCEMENT, advancement, data);
+            sapRequest.setPayment(transactionDetail.getTransaction());
+        } else {
+            registerFinalPayment(transactionDetail, amount, sapInvoiceRequest, false, SapRequestType.PAYMENT, getPaymentsFor(sapInvoiceRequest));
+            registerAdvancementOnly(ClientMap.uVATNumberFor(transactionDetail.getEvent().getParty()), transactionDetail, advancement);
+        }
+    }
+
+    public void registerAdvancementInPayment(final Payment payment) {
+        AccountingTransactionDetail paymentDetail = ((AccountingTransaction) FenixFramework.getDomainObject(payment.getId())).getTransactionDetail();
+        Event originEvent = paymentDetail.getTransaction().getRefund().getEvent();
+        DebtInterestCalculator calculator = originEvent.getDebtInterestCalculator(new DateTime());
+        ExcessRefund excessRefund = calculator.getExcessRefundStream().filter(er -> er.getId().equals(payment.getRefundId())).findAny().get();
+
+        excessRefund.getPartialPayments().stream().forEach(
+                pp -> registerAdvancementInPayment(excessRefund, pp, new Money(pp.getAmount()), paymentDetail, originEvent,
+                            getOpenInvoicesAndRemainingValue().entrySet().toArray(new Entry[0])));
+    }
+
+    private void registerAdvancementInPayment(final ExcessRefund excessRefund, final PartialPayment partialPayment, final Money amountUsed, final AccountingTransactionDetail payment,
+                                              final Event originEvent, final Entry<SapRequest, Money>[] openInvoices) {
+
+        if (partialPayment.getDebtEntry() instanceof Fine || partialPayment.getDebtEntry() instanceof Interest) {
+            final String clientId = ClientMap.uVATNumberFor(event.getParty());
+            SapRequest interestInvoice = registerInterestInvoice(new Money(partialPayment.getAmount()), clientId, payment, payment.getWhenRegistered());
+            registerAdvancementInPayment(excessRefund, partialPayment, payment, originEvent, amountUsed, interestInvoice, SapRequestType.PAYMENT_INTEREST);
+        } else {
+            if (amountUsed.isPositive()) {
+                final Entry<SapRequest, Money> entry = openInvoices[0];
+                final SapRequest openInvoice = entry.getKey();
+                final Money openInvoiceValue = entry.getValue();
+
+                if (openInvoiceValue.greaterOrEqualThan(amountUsed)) {
+                    registerAdvancementInPayment(excessRefund, partialPayment, payment, originEvent, amountUsed, openInvoice, SapRequestType.PAYMENT);
+                } else if (openInvoices.length > 1) {
+                    registerAdvancementInPayment(excessRefund, partialPayment, payment, originEvent, openInvoiceValue, openInvoice, SapRequestType.PAYMENT);
+                    registerAdvancementInPayment(excessRefund, partialPayment, amountUsed.subtract(openInvoiceValue), payment, originEvent, Arrays.copyOfRange(openInvoices, 1, openInvoices.length));
+                } else {
+                    throw new Error("There is no open invoice to register payment: " + payment.getExternalId() + " - that resulted from an advance");
+                }
+            }
+        }
+    }
+
+    private void registerAdvancementInPayment(final ExcessRefund excessRefund, final PartialPayment partialPayment, final AccountingTransactionDetail payment,
+                                              final Event originEvent, final Money amountUsed, final SapRequest openInvoice, final SapRequestType requestType) {
+        SapEvent sapOriginEvent = new SapEvent(originEvent);
+        SapRequest originalPayment = sapOriginEvent.getAdvancementPaymentsFor(partialPayment.getCreditEntry().getId()).findAny()
+                .orElseThrow(() -> new Error("There is no advancement registered for paymentId: " + partialPayment.getCreditEntry().getId()));
+        JsonObject advInPayment = toJsonUseAdvancementInPayment(payment, originalPayment, amountUsed, openInvoice.getDocumentNumber());
+        final SapRequest sapRequest = new SapRequest(event, originalPayment.getClientId(), amountUsed, getDocumentNumber(advInPayment, true),
+                requestType, Money.ZERO, advInPayment);
+        sapRequest.setPayment(payment.getTransaction());
+        sapRequest.setRefund(FenixFramework.getDomainObject(excessRefund.getId()));
+        sapRequest.setAdvancementRequest(originalPayment);
+    }
+
+
+    private JsonObject toJsonUseAdvancementInPayment(final AccountingTransactionDetail payment, final SapRequest originalPayment, final Money amountToUse, final String invoiceNumber) {
+        JsonObject data =
+                toJson(event, originalPayment.getClientJson(), payment.getWhenRegistered(), false, false, false, false, false);
+
+        JsonObject paymentDocument = toJsonPaymentDocument(amountToUse, "NP", invoiceNumber, payment.getWhenRegistered(),
+                "OU", getPaymentMethodReference(payment), SAFTPTSettlementType.NN.toString(), true);
+        paymentDocument.addProperty("excessPayment", amountToUse.negate().toPlainString());//the payment amount must be zero
+        paymentDocument.addProperty("isToCreditTotal", true);
+
+        final JsonArray documents = new JsonArray();
+        JsonObject line = new JsonObject();
+        line.addProperty("amount", amountToUse.getAmountAsString());
+        line.addProperty("isToDebit", false);
+        line.addProperty("originDocNumber", originalPayment.getDocumentNumberForType("NA"));
+        documents.add(line);
+        paymentDocument.add("documents", documents);
+
+        data.add("paymentDocument", paymentDocument);
+
+        return data;
     }
 
     public boolean processPendingRequests(Event event, ErrorLogConsumer errorLog, EventLogger elogger) {
@@ -567,7 +766,7 @@ public class SapEvent {
     }
 
     private boolean checkAndRegisterIntegration(Event event, ErrorLogConsumer errorLog, EventLogger elogger, JsonObject data,
-            String documentNumber, SapRequest sapRequest, JsonObject result, String action, boolean getDocument) {
+                                                String documentNumber, SapRequest sapRequest, JsonObject result, String action, boolean getDocument) {
         if (result.get("exception") == null) {
             boolean docIsIntregrated = checkDocumentsStatus(result, sapRequest, event, errorLog, elogger, action);
             boolean clientStatus = checkClientStatus(result, event, errorLog, elogger, action, data, sapRequest);
@@ -605,24 +804,26 @@ public class SapEvent {
         if (isNewDate) {
             return new DateTime();
         }
-        if (documentDate.getYear() < currentDate.getYear()) {
-            return documentDatePreviousYear.apply(currentDate);
-        }
         return documentDate;
     }
 
-    private boolean isToProcessDebt(Event event, boolean isGratuity) {
-        return (isGratuity || (event instanceof ExternalScholarshipPhdGratuityContribuitionEvent))
-                && event.getWhenOccured().isAfter(EventWrapper.LIMIT);
+    private boolean isToProcessDebt(boolean isGratuity, final boolean isNewDate, final DateTime documentDate) {
+        return (isGratuity || event instanceof ExternalScholarshipPhdGratuityContribuitionEvent)
+                && event.getWhenOccured().isAfter(EventWrapper.LIMIT)
+                && isNotPastDebtEndDate(isNewDate, documentDate);
+    }
+
+    private boolean isNotPastDebtEndDate(final boolean isNewDate, final DateTime documentDate) {
+        return getDebtInterval(documentDate, isNewDate) != null;
     }
 
     /**
      * Sends the data to SAP
-     * 
+     *
      * @param sapRequest - the domain representation of the request
-     * @param data - the necessary data to invoke the service for the specified operation
+     * @param data       - the necessary data to invoke the service for the specified operation
      * @return The result of the SAP service invocation, with the status of the documents and clients and also the xml request
-     *         sent. In case of an unexpected exception returns the exception message
+     * sent. In case of an unexpected exception returns the exception message
      */
     private JsonObject sendDataToSap(SapRequest sapRequest, JsonObject data) {
         JsonObject result = null;
@@ -657,9 +858,9 @@ public class SapEvent {
     }
 
     private JsonObject toJsonPayment(AccountingTransactionDetail transactionDetail, Money amount, SapRequest sapInvoiceRequest,
-            boolean isInterest) throws Exception {
+                                     boolean isInterest, boolean isPastPayment) {
         JsonObject data =
-                toJson(event, sapInvoiceRequest.getClientJson(), transactionDetail.getWhenRegistered(), false, false, isInterest);
+                toJson(event, sapInvoiceRequest.getClientJson(), transactionDetail.getWhenRegistered(), false, false, isInterest, false, isPastPayment);
         JsonObject paymentDocument = toJsonPaymentDocument(amount, "NP", sapInvoiceRequest.getDocumentNumber(), transactionDetail.getWhenRegistered(),
                 getPaymentMechanism(transactionDetail), getPaymentMethodReference(transactionDetail),
                 SAFTPTSettlementType.NL.toString(), true);
@@ -668,23 +869,10 @@ public class SapEvent {
         return data;
     }
 
-
-
-    private JsonObject toJsonPaymentFromAdvancement(Event event, SapRequest sapInvoiceRequest, Money amount)
-            throws Exception {
-        JsonObject data = toJson(event, sapInvoiceRequest.getClientJson(), new DateTime(), false, false, false);
-        JsonObject paymentDocument = toJsonPaymentDocument(amount, "NP", sapInvoiceRequest.getDocumentNumber(), new DateTime(), "OU", "",
-                SAFTPTSettlementType.NN.toString(), true);
-        paymentDocument.addProperty("excessPayment", amount.negate().toPlainString());//the payment amount must be zero
-
-        data.add("paymentDocument", paymentDocument);
-        return data;
-    }
-
     private JsonObject toJsonAdvancement(Money amount, Money excess, SapRequest sapInvoiceRequest,
-            AccountingTransactionDetail transactionDetail) throws Exception {
+                                         AccountingTransactionDetail transactionDetail) {
         JsonObject data =
-                toJson(event, sapInvoiceRequest.getClientJson(), transactionDetail.getWhenRegistered(), false, false, false);
+                toJson(event, sapInvoiceRequest.getClientJson(), transactionDetail.getWhenRegistered(), false, false, false, true, false);
         JsonObject paymentDocument = toJsonPaymentDocument(amount, "NP", sapInvoiceRequest.getDocumentNumber(), transactionDetail.getWhenRegistered(),
                 getPaymentMechanism(transactionDetail), getPaymentMethodReference(transactionDetail),
                 SAFTPTSettlementType.NL.toString(), true);
@@ -704,8 +892,8 @@ public class SapEvent {
     }
 
     private JsonObject toJsonCredit(Event event, DateTime documentDate, Money creditAmount, SapRequest sapInvoiceRequest,
-            boolean isDebtRegistration, boolean isNewDate) throws Exception {
-        JsonObject json = toJson(event, sapInvoiceRequest.getClientJson(), new DateTime(), isDebtRegistration, isNewDate, false);
+                                    boolean isDebtRegistration, boolean isNewDate) {
+        JsonObject json = toJson(event, sapInvoiceRequest.getClientJson(), new DateTime(), isDebtRegistration, isNewDate, false, false, false);
         JsonObject workDocument = toJsonWorkDocument(documentDate, new DateTime(), creditAmount, "NA", false, new DateTime());
         workDocument.addProperty("workOriginDocNumber", sapInvoiceRequest.getDocumentNumber());
         json.add("workingDocument", workDocument);
@@ -714,34 +902,56 @@ public class SapEvent {
         JsonObject paymentDocument = toJsonPaymentDocument(creditAmount, "NP", workingDocumentNumber, documentDate, "OU", "",
                 SAFTPTSettlementType.NN.toString(), false);
         paymentDocument.addProperty("isCreditNote", true);
-        paymentDocument.addProperty("paymentOriginDocNumber", sapInvoiceRequest.getDocumentNumber());
         paymentDocument.addProperty("excessPayment", creditAmount.negate().toPlainString());//the payment amount must be zero
+
+        final JsonArray documents = new JsonArray();
+        JsonObject line = new JsonObject();
+        line.addProperty("amount", creditAmount.getAmountAsString());
+        line.addProperty("isToDebit", true);
+        line.addProperty("originDocNumber", sapInvoiceRequest.getDocumentNumber());
+        documents.add(line);
+        paymentDocument.add("documents", documents);
+
+        json.add("paymentDocument", paymentDocument);
+        return json;
+    }
+
+    private JsonObject toJsonReimbursementAdvancement(SapRequest advancement, boolean isDebtRegistration, boolean isNewDate) {
+        JsonObject json = toJson(event, advancement.getClientJson(), new DateTime(), isDebtRegistration, isNewDate, false, false, false);
+
+        JsonObject paymentDocument = toJsonPaymentDocument(advancement.getAdvancement(), "NR", advancement.getDocumentNumber(),
+                new DateTime(), "OU", "", SAFTPTSettlementType.NR.toString(), false);
+        paymentDocument.addProperty("isReimbursement", true);
+        paymentDocument.addProperty("reimbursementStatus", "PENDING");
+        paymentDocument.addProperty("excessPayment", advancement.getAdvancement().negate().toPlainString());//the payment amount must be zero
         json.add("paymentDocument", paymentDocument);
 
         return json;
     }
 
-    private JsonObject toJsonReimbursement(Event event, Money amount, SapRequest sapInvoiceRequest,
-            boolean isDebtRegistration, boolean isNewDate) throws Exception {
-        JsonObject json = toJson(event, sapInvoiceRequest.getClientJson(), new DateTime(), isDebtRegistration, isNewDate, false);
-        JsonObject workDocument = toJsonWorkDocument(new DateTime(), new DateTime(), amount, "NA", false, new DateTime());
+
+    private JsonObject toJsonReimbursement(Event event, Money amountToRefund, final Money amountToCredit, SapRequest sapInvoiceRequest,
+                                           boolean isDebtRegistration, boolean isNewDate) {
+        JsonObject json = toJson(event, sapInvoiceRequest.getClientJson(), new DateTime(), isDebtRegistration, isNewDate, false, false, false);
+        JsonObject workDocument = toJsonWorkDocument(new DateTime(), new DateTime(), amountToCredit, "NA", false, new DateTime());
+
         workDocument.addProperty("workOriginDocNumber", sapInvoiceRequest.getDocumentNumber());
         json.add("workingDocument", workDocument);
 
         String workingDocumentNumber = workDocument.get("workingDocumentNumber").getAsString();
-        JsonObject paymentDocument = toJsonPaymentDocument(amount, "NR", workingDocumentNumber, new DateTime(), "OU", "",
+        JsonObject paymentDocument = toJsonPaymentDocument(amountToRefund, "NR", workingDocumentNumber, new DateTime(), "OU", "",
                 SAFTPTSettlementType.NR.toString(), false);
-        paymentDocument.addProperty("isReimbursment", true);
+        paymentDocument.addProperty("isReimbursement", true);
         paymentDocument.addProperty("reimbursementStatus", "PENDING");
-        paymentDocument.addProperty("excessPayment", amount.negate().toPlainString());//the payment amount must be zero
+        paymentDocument.addProperty("excessPayment", amountToRefund.negate().toPlainString());//the payment amount must be zero
         json.add("paymentDocument", paymentDocument);
 
         return json;
     }
 
     private JsonObject toJsonPaymentDocument(Money amount, String documentType, String workingDocumentNumber,
-            DateTime paymentDate, String paymentMechanism, String paymentMethodReference, String settlementType, boolean isDebit)
-            throws Exception {
+                                             DateTime paymentDate, String paymentMechanism, String paymentMethodReference, String settlementType,
+                                             boolean isDebit) {
         JsonObject paymentDocument = new JsonObject();
         paymentDocument.addProperty("paymentDocumentNumber", documentType + getDocumentNumber());
         paymentDocument.addProperty("paymentDate", paymentDate.toString(DT_FORMAT));
@@ -763,9 +973,9 @@ public class SapEvent {
     }
 
     private JsonObject toJsonInvoice(Event event, Money debtFenix, DateTime documentDate, DateTime entryDate, String clientId,
-            boolean isDebtRegistration, boolean isInterest) throws Exception {
+                                     boolean isDebtRegistration, boolean isInterest, boolean isPastPayment) {
         final JsonObject clientData = toJsonClient(event.getParty(), clientId);
-        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, true, isInterest);
+        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, true, isInterest, false, isPastPayment);
         JsonObject workDocument =
                 toJsonWorkDocument(documentDate, entryDate, debtFenix, "ND", true, new DateTime(Utils.getDueDate(event)));
 
@@ -773,14 +983,15 @@ public class SapEvent {
         return json;
     }
 
-    private JsonObject toJsonInvoice(final SapRequest sapRequest, final ExternalClient externalClient, final Money debtFenix,
+    private JsonObject toJsonInvoice(final ExternalClient externalClient, final Money debtFenix,
             final DateTime documentDate, final DateTime entryDate, final boolean isDebtRegistration,
-            final boolean isInterest, final String pledgeNumber) throws Exception {
+            final boolean isInterest, final String pledgeNumber) {
+
         final JsonObject clientData = toJsonClient(externalClient);
-        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, true, isInterest);
+        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, true, isInterest, false, false);
         JsonObject workDocument =
                 toJsonWorkDocument(documentDate, entryDate, debtFenix, "ND", true, new DateTime(Utils.getDueDate(event)));
-        if (Strings.isNullOrEmpty(pledgeNumber)) {
+        if (!Strings.isNullOrEmpty(pledgeNumber)) {
             workDocument.addProperty("compromiseMetadata", "{\"COMPROMISSO\":\"" + pledgeNumber + "\"}");
         }
 
@@ -789,30 +1000,17 @@ public class SapEvent {
     }
 
     private JsonObject toJsonDebt(Event event, Money debtFenix, String clientId, DateTime documentDate, DateTime entryDate,
-            boolean isDebtRegistration, String docType, boolean isToDebit, boolean isNewDate, String originalMetadata) {
+                                  boolean isDebtRegistration, String docType, boolean isToDebit, boolean isNewDate, String originalMetadata) {
         final JsonObject clientData = toJsonClient(event.getParty(), clientId);
-        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, isNewDate, false);
+        JsonObject json = toJson(event, clientData, documentDate, isDebtRegistration, isNewDate, false, false, false);
         JsonObject workDocument =
                 toJsonWorkDocument(documentDate, entryDate, debtFenix, docType, isToDebit, new DateTime(Utils.getDueDate(event)));
 
         if (originalMetadata == null) {
-            LocalDate startDate = isNewDate ? currentDate : documentDate.toLocalDate();
-            ExecutionYear executionYear = Utils.executionYearOf(event);
-            if (startDate.isBefore(executionYear.getBeginLocalDate())) {
-                startDate = executionYear.getBeginLocalDate();
-            }
-            LocalDate endDate = executionYear.getEndDateYearMonthDay().toLocalDate();
-
-            //If it is a Phd the dates are not regulated by the execution year
-            if (event instanceof PhdGratuityEvent) {
-                PhdGratuityEvent phdEvent = (PhdGratuityEvent) event;
-                startDate = phdEvent.getPhdGratuityDate().getYear() == phdEvent.getYear() ? phdEvent.getPhdGratuityDate()
-                        .toLocalDate() : phdEvent.getWhenOccured().toLocalDate();
-                endDate = startDate.plusYears(1);
-            }
-
+            final LocalDate[] debtInterval = getDebtInterval(documentDate, isNewDate);
+            final ExecutionYear executionYear = Utils.executionYearOf(event);
             String metadata = String.format("{\"ANO_LECTIVO\":\"%s\", \"START_DATE\":\"%s\", \"END_DATE\":\"%s\"}",
-                    executionYear.getName(), startDate.toString("yyyy-MM-dd"), endDate.toString("yyyy-MM-dd"));
+                    executionYear.getName(), debtInterval[0].toString("yyyy-MM-dd"), debtInterval[1].toString("yyyy-MM-dd"));
             workDocument.addProperty("debtMetadata", metadata);
         } else {
             workDocument.addProperty("debtMetadata", originalMetadata);
@@ -822,9 +1020,26 @@ public class SapEvent {
         return json;
     }
 
+    private LocalDate[] getDebtInterval(final DateTime documentDate, final boolean isNewDate) {
+        LocalDate startDate = isNewDate ? currentDate : documentDate.toLocalDate();
+        final LocalDate endDate;
+        if (event instanceof PhdGratuityEvent) {
+            PhdGratuityEvent phdEvent = (PhdGratuityEvent) event;
+            final LocalDate localDate = phdEvent.getPhdGratuityDate().getYear() == phdEvent.getYear() ?
+                    phdEvent.getPhdGratuityDate().toLocalDate() : phdEvent.getWhenOccured().toLocalDate();
+            endDate = localDate.plusYears(1);
+        } else {
+            final ExecutionYear executionYear = Utils.executionYearOf(event);
+            if (startDate.isBefore(executionYear.getBeginLocalDate())) {
+                startDate = executionYear.getBeginLocalDate();
+            }
+            endDate = executionYear.getEndDateYearMonthDay().toLocalDate();
+        }
+        return startDate.isAfter(endDate) ? null : new LocalDate[]{startDate, endDate};
+    }
+
     private JsonObject toJsonDebtCredit(Event event, Money debtFenix, String clientId, DateTime documentDate, DateTime entryDate,
-            boolean isDebtRegistration, String docType, boolean isToDebit, boolean isNewDate, SapRequest debtRequest)
-            throws Exception {
+                                        boolean isDebtRegistration, String docType, boolean isToDebit, boolean isNewDate, SapRequest debtRequest) {
         JsonObject request = new JsonParser().parse(debtRequest.getRequest()).getAsJsonObject();
         String originalMetadata = request.get("workingDocument").getAsJsonObject().get("debtMetadata").getAsString();
         JsonObject json = toJsonDebt(event, debtFenix, clientId, documentDate, entryDate, isDebtRegistration, docType, isToDebit,
@@ -835,7 +1050,7 @@ public class SapEvent {
     }
 
     private JsonObject toJsonWorkDocument(DateTime documentDate, DateTime entryDate, Money amount, String documentType,
-            boolean isToDebit, DateTime dueDate) {
+                                          boolean isToDebit, DateTime dueDate) {
         JsonObject workDocument = new JsonObject();
         workDocument.addProperty("documentDate", documentDate.toString(DT_FORMAT));
         workDocument.addProperty("entryDate", entryDate.toString(DT_FORMAT));
@@ -857,11 +1072,11 @@ public class SapEvent {
     }
 
     public JsonObject toJson(final Event event, final JsonObject clientData, DateTime documentDate, boolean isDebtRegistration,
-            boolean isNewDate, boolean isInterest) {
+                             boolean isNewDate, boolean isInterest, boolean isAdvancement, boolean isPastPayment) {
         final JsonObject json = toJsonCommon(documentDate, isNewDate);
 
         final String description = event.getDescription().toString();
-        final SimpleImmutableEntry<String, String> product = mapToProduct(event, description, isDebtRegistration, isInterest);
+        final SimpleImmutableEntry<String, String> product = mapToProduct(event, description, isDebtRegistration, isInterest, isAdvancement, isPastPayment);
         json.addProperty("productCode", product.getKey());
         json.addProperty("productDescription", detailedDescription(product.getValue(), event));
 
@@ -917,8 +1132,8 @@ public class SapEvent {
 
         PhysicalAddress physicalAddress = Utils.toAddress(party, countryCode);
         clientData.addProperty("street",
-                physicalAddress != null && !Strings.isNullOrEmpty(physicalAddress.getAddress().trim()) ? Utils
-                        .limitFormat(MAX_SIZE_ADDRESS, physicalAddress.getAddress()) : MORADA_DESCONHECIDO);
+                physicalAddress != null && physicalAddress.getAddress() != null && !Strings.isNullOrEmpty(physicalAddress.getAddress().trim()) ?
+                        Utils.limitFormat(MAX_SIZE_ADDRESS, physicalAddress.getAddress()) : MORADA_DESCONHECIDO);
 
         String city = Utils.limitFormat(MAX_SIZE_CITY, party.getDistrictSubdivisionOfResidence()).trim();
         clientData.addProperty("city", !Strings.isNullOrEmpty(city) ? city : MORADA_DESCONHECIDO);
@@ -958,7 +1173,7 @@ public class SapEvent {
         clientData.addProperty("city", externalClient.getCity());
         clientData.addProperty("region", externalClient.getRegion());
         clientData.addProperty("postalCode", externalClient.getPostalCode());
-        clientData.addProperty("vatNumber", externalClient.getVatNumber());
+        clientData.addProperty("vatNumber", externalClient.getFiscalCountry() + externalClient.getVatNumber());
         clientData.addProperty("fiscalCountry", externalClient.getFiscalCountry());
         clientData.addProperty("nationality", externalClient.getNationality());
         clientData.addProperty("billingIndicator", externalClient.getBillingIndicator());
@@ -973,9 +1188,9 @@ public class SapEvent {
         }
     }
 
-    private void checkValidDocumentNumber(String documentNumber, Event event) throws Exception {
+    private void checkValidDocumentNumber(String documentNumber, Event event) {
         if ('0' == documentNumber.charAt(2)) {
-            throw new Exception("Houve uma tentativa de efectuar uma operação sobre o documento: " + documentNumber
+            throw new Error("Houve uma tentativa de efectuar uma operação sobre o documento: " + documentNumber
                     + " - evento: " + event.getExternalId());
         }
     }
@@ -995,59 +1210,51 @@ public class SapEvent {
     /**
      * Returns the open invoices and the remaining value of the first open invoice
      * The list is ordered, the first open invoice is the first of the list
-     * 
+     *
      * @return
      */
-    private SimpleImmutableEntry<List<SapRequest>, Money> getOpenInvoicesAndRemainingValue() {
-        List<SapRequest> invoiceEntries =
-                getInvoiceEntries().sorted(SapRequest.DOCUMENT_NUMBER_COMPARATOR).collect(Collectors.toList());
-        Money invoiceAmount = Money.ZERO;
-        Money firstRemainingValue = Money.ZERO;
-        Money totalAmount = getPayedAmount().add(getCreditAmount());
-        List<SapRequest> openInvoiceEntries = new ArrayList<SapRequest>();
-        for (SapRequest invoiceEntry : invoiceEntries) {
-            invoiceAmount = invoiceAmount.add(invoiceEntry.getValue());
-            if (invoiceAmount.greaterThan(totalAmount)) {
-                if (firstRemainingValue.isZero()) {
-                    firstRemainingValue = invoiceAmount.subtract(totalAmount);
-                }
-                openInvoiceEntries.add(0, invoiceEntry);
-            }
-        }
-        return new SimpleImmutableEntry<List<SapRequest>, Money>(openInvoiceEntries, firstRemainingValue);
+    private SortedMap<SapRequest, Money> getOpenInvoicesAndRemainingValue() {
+        final SortedMap<SapRequest, Money> openInvoiceMap = new TreeMap<>(SapRequest.COMPARATOR_BY_EVENT_AND_ORDER);
+        return getInvoiceEntries().sorted(SapRequest.COMPARATOR_BY_ORDER)
+                .filter(sr -> sr.openInvoiceValue().isPositive())
+                .collect(Collectors.toMap(sr -> sr, sr -> sr.openInvoiceValue(), (sr1, sr2) -> sr1, () -> openInvoiceMap));
     }
 
     private Stream<SapRequest> getInvoiceEntries() {
         return getFilteredSapRequestStream().filter(sr -> sr.getRequestType() == SapRequestType.INVOICE);
     }
 
-    private SapRequest getLastInvoiceNumber() {
-        return getInvoiceEntries().max(SapRequest.DOCUMENT_NUMBER_COMPARATOR).orElse(null);
+    private Stream<SapRequest> getPaymentsFor(SapRequest request) {
+        return getFilteredSapRequestStream().filter(sr -> sr.getRequestType() == SapRequestType.PAYMENT
+                && sr.refersToDocument(request.getDocumentNumber()));
+    }
+
+    private SapRequest getLastInvoice() {
+        return getInvoiceEntries().max(SapRequest.COMPARATOR_BY_ORDER).orElse(null);
     }
 
     /**
      * Returns the open debts and the remaining value of the first open debt
      * The list is ordered, the first open debt is the first of the list
-     * 
+     *
      * @return
      */
     private SimpleImmutableEntry<List<SapRequest>, Money> getOpenDebtsAndRemainingValue() {
-        List<SapRequest> debtEntries =
-                getDebtEntries().sorted(SapRequest.DOCUMENT_NUMBER_COMPARATOR).collect(Collectors.toList());
+        List<SapRequest> debtEntries = getDebtEntries().sorted(SapRequest.COMPARATOR_BY_ORDER).collect(Collectors.toList());
         Money debtAmount = Money.ZERO;
         Money firstRemainingValue = Money.ZERO;
         Money totalAmount = getDebtCreditAmount();
         List<SapRequest> openDebtEntries = new ArrayList<SapRequest>();
         for (SapRequest debtEntry : debtEntries) {
             debtAmount = debtAmount.add(debtEntry.getValue());
-            if (debtAmount.greaterThan(totalAmount)) {
+            if (debtAmount.greaterOrEqualThan(totalAmount)) {
                 if (firstRemainingValue.isZero()) {
                     firstRemainingValue = debtAmount.subtract(totalAmount);
                 }
-                openDebtEntries.add(0, debtEntry);
+                openDebtEntries.add(debtEntry);
             }
         }
-        return new SimpleImmutableEntry<List<SapRequest>, Money>(openDebtEntries, firstRemainingValue);
+        return new SimpleImmutableEntry<>(openDebtEntries, firstRemainingValue);
     }
 
     private Stream<SapRequest> getDebtEntries() {
@@ -1056,12 +1263,12 @@ public class SapEvent {
     }
 
     private SapRequest getLastDebt() {
-        Optional<SapRequest> findFirst = getDebtEntries().sorted(SapRequest.DOCUMENT_NUMBER_COMPARATOR.reversed()).findFirst();
+        Optional<SapRequest> findFirst = getDebtEntries().sorted(SapRequest.COMPARATOR_BY_ORDER.reversed()).findFirst();
         return findFirst.isPresent() ? findFirst.get() : null;
     }
 
     private boolean checkClientStatus(JsonObject result, Event event, ErrorLogConsumer errorLog, EventLogger elogger,
-            String action, JsonObject sentData, SapRequest sr) {
+                                      String action, JsonObject sentData, SapRequest sr) {
         JsonArray jsonArray = result.getAsJsonArray("customers");
         for (int iter = 0; iter < jsonArray.size(); iter++) {
             JsonObject json = jsonArray.get(iter).getAsJsonObject();
@@ -1075,7 +1282,7 @@ public class SapEvent {
     }
 
     private boolean checkDocumentsStatus(JsonObject result, SapRequest sapRequest, Event event, ErrorLogConsumer errorLog,
-            EventLogger elogger, String action) {
+                                         EventLogger elogger, String action) {
         JsonArray jsonArray = result.getAsJsonArray("documents");
         boolean checkStatus = true;
         for (int iter = 0; iter < jsonArray.size(); iter++) {
@@ -1114,23 +1321,9 @@ public class SapEvent {
         return addAll(SapRequestType.CREDIT);
     }
 
-    public Money getAdvancementAmount() {
-        return getFilteredSapRequestStream().filter(sr -> sr.getRequestType().equals(SapRequestType.ADVANCEMENT))
-                .map(SapRequest::getAdvancement).reduce(Money.ZERO, Money::add);
-    }
-
-    public Money getReimbursementsAmount() {
-        return addAll(SapRequestType.REIMBURSEMENT);
-    }
-
     public boolean hasPayment(final String transactionId) {
         return getPaymentsFor(transactionId).findAny().isPresent();
     }
-
-//    public boolean hasPayment(final AccountingTransaction transaction, SapRequest sapRequest) {
-//        return getPaymentsFor(transaction.getTransactionDetail().getExternalId()).filter(sr -> transaction == sr.getPayment())
-//                .anyMatch(sr -> sr != sapRequest);
-//    }
 
     private Stream<SapRequest> getPaymentsFor(final String transactionDetailId) {
         return getFilteredSapRequestStream()
@@ -1138,14 +1331,15 @@ public class SapEvent {
                 .filter(sr -> sr.getPayment() != null).filter(sr -> transactionDetailId.equals(sr.getPayment().getExternalId()));
     }
 
+    private Stream<SapRequest> getAdvancementPaymentsFor(final String transactionDetailId) {
+        return getFilteredSapRequestStream()
+                .filter(sr -> sr.getRequestType() == SapRequestType.ADVANCEMENT)
+                .filter(sr -> sr.getPayment() != null && transactionDetailId.equals(sr.getPayment().getExternalId()));
+    }
+
     public boolean hasInterestPayment(final AccountingTransaction transaction) {
         return getFilteredSapRequestStream().filter(sr -> sr.getRequestType() == SapRequestType.PAYMENT_INTEREST)
                 .filter(sr -> transaction == sr.getPayment()).findAny().isPresent();
-    }
-
-    public SapRequest getInterestInvoiceRequest(final AccountingTransaction transaction) {
-        return getFilteredSapRequestStream().filter(sr -> sr.getRequestType() == SapRequestType.INVOICE_INTEREST)
-                .filter(sr -> transaction == sr.getPayment()).findAny().orElse(null);
     }
 
     public boolean hasCredit(String creditId) {
@@ -1153,10 +1347,22 @@ public class SapEvent {
                 .anyMatch(sr -> creditId.equals(sr.getCreditId()));
     }
 
+    public boolean hasRefund(final String refundId) {
+        return getFilteredSapRequestStream().filter(sr -> sr.getRequestType() == SapRequestType.REIMBURSEMENT)
+                .anyMatch(sr -> refundId.equals(sr.getRefund().getExternalId()));
+    }
+
     public static SimpleImmutableEntry<String, String> mapToProduct(Event event, String eventDescription,
-            boolean isDebtRegistration, boolean isInterest) {
+                                                                    boolean isDebtRegistration, boolean isInterest,
+                                                                    boolean isAdvancement, boolean isPastEvent) {
         if (isInterest) {
             return new SimpleImmutableEntry<String, String>("0036", "MULTAS");
+        }
+        if (isAdvancement) {
+            return new SimpleImmutableEntry<String, String>("0056", "ADIANTAMENTO");
+        }
+        if (isPastEvent) {
+            return new SimpleImmutableEntry<String, String>("0063", "REGULARIZAÇAO ANOS ANTERIORES");
         }
         if (event.isGratuity() && !(event instanceof PhdGratuityEvent)) {
             final GratuityEvent gratuityEvent = (GratuityEvent) event;
@@ -1274,7 +1480,7 @@ public class SapEvent {
     }
 
     private void logError(Event event, String clientId, ErrorLogConsumer errorLog, EventLogger elogger, String returnMessage,
-            String action, JsonObject sentData, SapRequest sr) {
+                          String action, JsonObject sentData, SapRequest sr) {
         final Party party = event.getParty();
         errorLog.accept(event.getExternalId(), clientId, party.getName(), "", "", returnMessage, "", "",
                 sentData.get("clientData").getAsJsonObject().get("fiscalCountry").getAsString(), clientId,
@@ -1299,7 +1505,7 @@ public class SapEvent {
     }
 
     private void logError(Event event, ErrorLogConsumer errorLog, EventLogger elogger, String errorMessage, String documentNumber,
-            String action, SapRequest sr) {
+                          String action, SapRequest sr) {
         BigDecimal amount = null;
         DebtCycleType cycleType = Utils.cycleType(event);
         final Party party = event.getParty();
@@ -1334,5 +1540,4 @@ public class SapEvent {
     public Money calculateDebtValue() {
         return getDebtAmount().subtract(getDebtCreditAmount());
     }
-
 }

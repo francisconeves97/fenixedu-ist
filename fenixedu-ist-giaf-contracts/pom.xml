@@ -4,7 +4,7 @@
     <parent>
         <groupId>pt.ist</groupId>
         <artifactId>fenixedu-ist</artifactId>
-        <version>16.10.0-SNAPSHOT</version>
+        <version>17.4.0-SNAPSHOT</version>
     </parent>
 
     <artifactId>fenixedu-ist-giaf-contracts</artifactId>
@@ -13,7 +13,7 @@
 
     <properties>
         <version.com.oracle.ojdbc14>9.0.2.0.0</version.com.oracle.ojdbc14>
-	<version.pt.ist.sap-group-integration>1.6.0</version.pt.ist.sap-group-integration>
+	<version.pt.ist.sap-group-integration>1.6.1</version.pt.ist.sap-group-integration>
     </properties>
 
     <dependencies>

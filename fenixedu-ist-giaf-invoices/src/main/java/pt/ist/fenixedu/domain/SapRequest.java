@@ -16,6 +16,64 @@ import pt.ist.fenixframework.Atomic.TxMode;
 
 public class SapRequest extends SapRequest_Base {
 
+    public class ClientData {
+
+        private final JsonObject clientData = getRequestAsJson().get("clientData").getAsJsonObject();
+
+        public String getAccountId() {
+            return clientData.get("accountId").getAsString();
+        }
+        public String getCompanyName() {
+            return clientData.get("companyName").getAsString();
+        }
+        public String getClientId() {
+            return clientData.get("clientId").getAsString();
+        }
+        public String getCountry() {
+            return clientData.get("country").getAsString();
+        }
+        public String getStreet() {
+            return clientData.get("street").getAsString();
+        }
+        public String getCity() {
+            return clientData.get("city").getAsString();
+        }
+        public String getRegion() {
+            return clientData.get("region").getAsString();
+        }
+        public String getPostalCode() {
+            return clientData.get("postalCode").getAsString();
+        }
+        public String getVatNumber() {
+            return clientData.get("vatNumber").getAsString();
+        }
+        public String getFiscalCountry() {
+            return clientData.get("fiscalCountry").getAsString();
+        }
+        public String getNationality() {
+            return clientData.get("nationality").getAsString();
+        }
+        public String getBillingIndicator() {
+            return clientData.get("billingIndicator").getAsString();
+        }
+    }
+
+    public class DocumentData {
+
+        private final JsonObject json = getRequestAsJson();
+
+        public String getCurrencyCode() {
+            return json.get("currencyCode").getAsString();
+        }
+        public String getProductCode() {
+            return json.get("productCode").getAsString();
+        }
+        public String getProductDescription() {
+            return json.get("productDescription").getAsString();
+        }
+
+    }
+
     public static final Comparator<SapRequest> COMPARATOR_BY_DATE = new Comparator<SapRequest>() {
         @Override
         public int compare(SapRequest r1, SapRequest r2) {
@@ -36,7 +94,7 @@ public class SapRequest extends SapRequest_Base {
             final Integer i1 =
                     sr1.getDocumentNumber() != null ? Integer.valueOf(sr1.getDocumentNumber().substring(2)) : Integer.valueOf(-1);
             final Integer i2 = sr2.getDocumentNumber() != null ? Integer.valueOf(sr2.getDocumentNumber().substring(2)) : Integer
-                    .valueOf(-1);;
+                    .valueOf(-1);
             return i1.compareTo(i2);
         }
     };
@@ -49,11 +107,9 @@ public class SapRequest extends SapRequest_Base {
     };
 
     public SapRequest(Event event, String clientId, Money amount, String documentNumber, SapRequestType requestType,
-            Money advancement,
-            JsonObject request) {
+            Money advancement, JsonObject request) {
         Optional<SapRequest> maxRequest = event.getSapRequestSet().stream().filter(sr -> sr != this).max(COMPARATOR_BY_ORDER);
         Integer order = maxRequest.isPresent() ? maxRequest.get().getOrder() : 0;
-
         setSapRoot(SapRoot.getInstance());
         setEvent(event);
         setClientId(clientId);
@@ -91,12 +147,19 @@ public class SapRequest extends SapRequest_Base {
         setEvent(null);
         setOriginalRequest(null);
         setPayment(null);
+        setRefund(null);
         final SapDocumentFile documentFile = getSapDocumentFile();
         if (documentFile != null) {
             documentFile.delete();
         }
         setSapRoot(null);
         deleteDomainObject();
+    }
+
+    public boolean isReferencedByOtherRequest() {
+        return getEvent().getSapRequestSet().stream()
+                .filter(r -> !r.getIgnore())
+                .anyMatch(r -> r != this && r.refersToDocument(getDocumentNumber()));
     }
 
     public boolean refersToDocument(final String documentNumber) {
@@ -106,22 +169,63 @@ public class SapRequest extends SapRequest_Base {
         final JsonObject o = new JsonParser().parse(getRequest()).getAsJsonObject();
         final JsonElement paymentDocument = o.get("paymentDocument");
         if (paymentDocument != null && !paymentDocument.isJsonNull()) {
-            final JsonObject paymentDocumentO = paymentDocument.getAsJsonObject();
-            if (hasValue(paymentDocumentO, "workingDocumentNumber", documentNumber)
-                    || hasValue(paymentDocumentO, "originatingOnDocumentNumber", documentNumber)
-                    || hasValue(paymentDocumentO, "paymentOriginDocNumber", documentNumber)) {
+            final JsonObject paymentJson = paymentDocument.getAsJsonObject();
+            if (hasValue(paymentJson, "workingDocumentNumber", documentNumber)
+                    || hasValue(paymentJson, "originatingOnDocumentNumber", documentNumber)
+                    || hasValue(paymentJson, "paymentOriginDocNumber", documentNumber)) {
                 return true;
             }
         }
         final JsonElement workingDocument = o.get("workingDocument");
         if (workingDocument != null && !workingDocument.isJsonNull()) {
-            final JsonObject workingDocumentO = workingDocument.getAsJsonObject();
-            if (hasValue(workingDocumentO, "workOriginDocNumber", documentNumber)
-                    || hasValue(workingDocumentO, "paymentDocumentNumber", documentNumber)) {
+            final JsonObject workingJson = workingDocument.getAsJsonObject();
+            if (hasValue(workingJson, "workOriginDocNumber", documentNumber)
+                    || hasValue(workingJson, "paymentDocumentNumber", documentNumber)) {
                 return true;
             }
         }
         return false;
+    }
+
+    public String getDocumentNumberForType(String typeCode){
+        final JsonObject json = new JsonParser().parse(getRequest()).getAsJsonObject();
+        final JsonElement paymentDocument = json.get("paymentDocument");
+        if (paymentDocument != null && !paymentDocument.isJsonNull()) {
+            final JsonObject paymentJson = paymentDocument.getAsJsonObject();
+            final String workingDocumentNumber = getDocumentNumber(paymentJson, "workingDocumentNumber", typeCode);
+            if (workingDocumentNumber != null) {
+                return workingDocumentNumber;
+            }
+            final String originatingOnDocumentNumber = getDocumentNumber(paymentJson, "originatingOnDocumentNumber", typeCode);
+            if (originatingOnDocumentNumber != null) {
+                return originatingOnDocumentNumber;
+            }
+            final String paymentOriginDocNumber = getDocumentNumber(paymentJson, "paymentOriginDocNumber", typeCode);
+            if (paymentOriginDocNumber != null) {
+                return paymentOriginDocNumber;
+            }
+        }
+        final JsonElement workingDocument = json.get("workingDocument");
+        if (workingDocument != null && !workingDocument.isJsonNull()) {
+            final JsonObject workingJson = workingDocument.getAsJsonObject();
+            final String workOriginDocNumber = getDocumentNumber(workingJson, "paymentOriginDocNumber", typeCode);
+            if (workOriginDocNumber != null) {
+                return workOriginDocNumber;
+            }
+            final String paymentDocumentNumber = getDocumentNumber(workingJson, "paymentDocumentNumber", typeCode);
+            if(paymentDocumentNumber != null) {
+                return paymentDocumentNumber;
+            }
+        }
+        return null;
+    }
+
+    private String getDocumentNumber(final JsonObject json, final String key, final String value){
+        final JsonElement jsonElement = json.get(key);
+        if(jsonElement != null && !jsonElement.isJsonNull() && jsonElement.getAsString().startsWith(value)){
+            return jsonElement.getAsString();
+        }
+        return null;
     }
 
     private boolean hasValue(final JsonObject o, final String key, final String value) {
@@ -130,8 +234,14 @@ public class SapRequest extends SapRequest_Base {
     }
 
     public JsonObject getClientJson() {
-        final JsonObject o = new JsonParser().parse(getRequest()).getAsJsonObject();
-        return o.get("clientData").getAsJsonObject();
+        final JsonObject o = getRequestAsJson();
+        return o == null ? null : o.get("clientData").getAsJsonObject();
+    }
+
+    public String getUVat() {
+        final JsonObject o = getRequestAsJson();
+        final JsonObject clientData = o == null ? null : o.get("clientData").getAsJsonObject();
+        return clientData == null || clientData.isJsonNull() ? null : clientData.get("vatNumber").getAsString();
     }
 
     public boolean getReferenced() {
@@ -143,6 +253,69 @@ public class SapRequest extends SapRequest_Base {
     public boolean isDebtDocument() {
         final SapRequestType requestType = getRequestType();
         return requestType == SapRequestType.DEBT || requestType == SapRequestType.DEBT_CREDIT;
+    }
+
+    public JsonObject getRequestAsJson() {
+        final String request = getRequest();
+        return request == null || request.isEmpty() ? null : new JsonParser().parse(getRequest()).getAsJsonObject();
+    }
+
+    public ClientData getClientData() {
+        return new ClientData();
+    }
+
+    public DocumentData getDocumentData() {
+        return new DocumentData();
+    }
+
+    public Money consumedAmount() {
+        final SapRequest sapRequest = this;
+        return getEvent().getSapRequestSet().stream()
+            .filter(r -> r != sapRequest && !r.getIgnore() && r.refersToDocument(sapRequest.getDocumentNumber()) && r.isConsumer())
+            .map(r -> r.getValue())
+            .reduce(Money.ZERO, Money::add);
+    }
+
+    private boolean isConsumer() {
+        final SapRequestType type = getRequestType();
+        return type == SapRequestType.PAYMENT || type == SapRequestType.ADVANCEMENT || type == SapRequestType.CREDIT;
+    }
+
+    public Money getValueAvailableForTransfer() {
+        return getValue().subtract(consumedAmount());
+    }
+
+    public boolean isAvailableForTransfer() {
+        return getValueAvailableForTransfer().isPositive();
+    }
+
+    public boolean getIsAvailableForTransfer() {
+        return isAvailableForTransfer();
+    }
+
+    public boolean getCanBeCanceled() {
+        return getIntegrated() && !getIgnore() && getRequest().length() > 2 && getAnulledRequest() == null
+                && getRequestType() != SapRequestType.DEBT && getRequestType() != SapRequestType.DEBT_CREDIT
+                && getRequestType() != SapRequestType.CREDIT && !isReferencedByOtherRequest();
+    }
+
+    public boolean getCanBeClosed() {
+        return getIntegrated() && !getIgnore() && getRequest().length() > 2 && getAnulledRequest() == null
+                && (getRequestType() == SapRequestType.DEBT || getRequestType() == SapRequestType.INVOICE
+                    || getRequestType() == SapRequestType.CREDIT) && !isReferencedByOtherRequest();
+    }
+
+    public boolean getCanBeRefunded() {
+        return getIntegrated() && !getIgnore() && getRequest().length() > 2 && (getRequestType() == SapRequestType.PAYMENT || getRequestType() == SapRequestType.ADVANCEMENT);
+    }
+
+    public Money openInvoiceValue() {
+        return getRequest().length() == 2 ? Money.ZERO : getValue().subtract(consumedAmount());
+    }
+
+    @Atomic
+    public void toggleIgnore() {
+        setIgnore(!getIgnore());
     }
 
 }

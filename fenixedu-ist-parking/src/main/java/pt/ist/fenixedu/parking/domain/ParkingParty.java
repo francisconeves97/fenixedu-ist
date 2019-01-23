@@ -445,9 +445,9 @@ public class ParkingParty extends ParkingParty_Base {
         if (getParty().isPerson()) {
             final Person person = (Person) getParty();
             final Employee employee = person.getEmployee();
-            if (employee != null && new ActiveTeachersGroup().isMember(person.getUser())
+            if (employee != null && (new ActiveTeachersGroup().isMember(person.getUser())
                     || new ActiveEmployees().isMember(person.getUser()) || new ActiveResearchers().isMember(person.getUser())
-                    || new ActiveGrantOwner().isMember(person.getUser())) {
+                    || new ActiveGrantOwner().isMember(person.getUser()))) {
                 result.add(employee.getEmployeeNumber().toString());
             }
             final Student student = person.getStudent();
@@ -463,10 +463,10 @@ public class ParkingParty extends ParkingParty_Base {
             final Person person = (Person) getParty();
             final Employee employee = person.getEmployee();
 
-            if (employee != null && new ActiveTeachersGroup().isMember(person.getUser())
+            if (employee != null && (new ActiveTeachersGroup().isMember(person.getUser())
                     || new ActiveEmployees().isMember(person.getUser()) || new ActiveResearchers().isMember(person.getUser())
-                    || new ActiveGrantOwner().isMember(person.getUser())) {
-                    return employee.getEmployeeNumber();
+                    || new ActiveGrantOwner().isMember(person.getUser()))) {
+                return employee.getEmployeeNumber();
             }
 
             final Student student = person.getStudent();

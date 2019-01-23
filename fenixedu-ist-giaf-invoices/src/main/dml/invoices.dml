@@ -114,3 +114,39 @@ relation SapRootSapRequest {
         multiplicity *;
     }
 }
+
+relation PaymentMethodDefaultInternal {
+    .org.fenixedu.bennu.core.domain.Bennu playsRole internalBennu {
+        multiplicity 0..1;
+    }
+    .org.fenixedu.academic.domain.accounting.PaymentMethod playsRole internalPaymentMethod {
+        multiplicity 0..1;
+    }
+}
+
+relation RefundExternalClient {
+    .org.fenixedu.academic.domain.accounting.Refund playsRole refund {
+        multiplicity *;
+    }
+    ExternalClient playsRole externalClient {
+        multiplicity 0..1;
+    }
+}
+
+relation SapRequestReimbursementAdvancement {
+	SapRequest playsRole reimbursementRequest {
+	    multiplicity 0..1;
+    }
+    SapRequest playsRole advancementRequest {
+	    multiplicity 0..1;
+    }
+}
+
+relation SapRequestRefund {
+	SapRequest playsRole sapRequest {
+	    multiplicity *;
+    }
+    .org.fenixedu.academic.domain.accounting.Refund playsRole refund {
+    	multiplicity 0..1;
+    }
+}
