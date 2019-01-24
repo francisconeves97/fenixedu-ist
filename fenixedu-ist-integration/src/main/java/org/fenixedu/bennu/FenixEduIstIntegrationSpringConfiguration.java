@@ -22,7 +22,7 @@ import org.fenixedu.bennu.spring.BennuSpringModule;
 import org.fenixedu.otlis.core.service.StudentInfoService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.scheduling.annotation.EnableAsync;
-import pt.ist.fenixedu.integration.otlis.ISTStudentInfoService;
+import org.fenixedu.ulisboa.otlis.service.ISTStudentInfoService;
 
 @EnableAsync
 @BennuSpringModule(basePackages = { "pt.ist.fenixedu.integration.ui.spring" }, bundles = "FenixEduIstIntegrationResources")
