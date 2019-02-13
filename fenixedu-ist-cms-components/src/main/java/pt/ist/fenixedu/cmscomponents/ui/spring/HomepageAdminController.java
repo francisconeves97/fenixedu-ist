@@ -29,6 +29,7 @@ import org.fenixedu.academic.domain.contacts.PartyContact;
 import org.fenixedu.academic.domain.contacts.PartyContactType;
 import org.fenixedu.academic.domain.contacts.WebAddress;
 import org.fenixedu.academic.predicate.AccessControl;
+import org.fenixedu.bennu.core.groups.Group;
 import org.fenixedu.bennu.spring.portal.SpringApplication;
 import org.fenixedu.bennu.spring.portal.SpringFunctionality;
 import org.fenixedu.cms.domain.Site;
@@ -97,6 +98,7 @@ public class HomepageAdminController {
                 homepage.setResearchUnitHomepage(researchUnitHomepage);
                 homepage.setResearchUnitName(researchUnitName);
                 homepage.getSite().setPublished(published);
+                homepage.getSite().setCanViewGroup(Group.anyone());
                 homepage.setShowUnit(showUnit);
                 homepage.setShowCurrentExecutionCourses(showCurrentExecutionCourses);
                 homepage.setShowCurrentAttendingExecutionCourses(showCurrentAttendingExecutionCourses);
