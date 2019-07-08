@@ -28,7 +28,7 @@ public class UpdateSantanderCardsState extends CronTask {
     }
 
     public void updateCardState(User user) {
-        SantanderEntry entry = service.getOrUpdateState(user);
+       /* SantanderEntry entry = service.getOrUpdateState(user);
         if (entry == null || entry.canRenovateCard()) {
             FenixFramework.atomic(() -> {
                 try {
@@ -41,6 +41,6 @@ public class UpdateSantanderCardsState extends CronTask {
                 }
             });
         
-        }
+        }*/
     }
 }
